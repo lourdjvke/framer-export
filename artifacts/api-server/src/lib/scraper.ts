@@ -41,6 +41,42 @@ function mimeToCategory(mimeType: string): FileCategory {
   return "other";
 }
 
+/** Map actual Content-Type to the correct file extension so Framer's disguised avif/webp files get the right ext. */
+const MIME_TO_EXT: Record<string, string> = {
+  "image/avif": ".avif",
+  "image/webp": ".webp",
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/svg+xml": ".svg",
+  "image/x-icon": ".ico",
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "video/ogg": ".ogv",
+  "video/quicktime": ".mov",
+  "application/javascript": ".js",
+  "text/javascript": ".js",
+  "application/x-javascript": ".mjs",
+  "text/css": ".css",
+  "text/html": ".html",
+  "font/woff": ".woff",
+  "font/woff2": ".woff2",
+  "font/ttf": ".ttf",
+  "font/otf": ".otf",
+};
+
+/** If the actual mime type implies a different extension than what the URL had, return the corrected path. */
+function correctExtension(localPath: string, mimeType: string): string {
+  const correctExt = MIME_TO_EXT[mimeType];
+  if (!correctExt) return localPath;
+  const currentExt = path.extname(localPath).toLowerCase();
+  if (currentExt === correctExt) return localPath;
+  // Only rename image/video types — JS/CSS/HTML extensions come from the URL intentionally
+  const isMedia = mimeType.startsWith("image/") || mimeType.startsWith("video/");
+  if (!isMedia) return localPath;
+  return localPath.slice(0, localPath.length - currentExt.length) + correctExt;
+}
+
 function extToCategory(ext: string): FileCategory {
   const e = ext.toLowerCase();
   if ([".html", ".htm"].includes(e)) return "html";
@@ -519,12 +555,20 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
     if (downloaded.has(absUrl)) return;
     downloaded.add(absUrl);
 
-    const localPath = urlToLocal(absUrl);
+    let localPath = urlToLocal(absUrl);
     if (!localPath) return;
 
     try {
       const { data, mimeType, status } = await fetchWithRetry(absUrl);
       if (status >= 400) return;
+
+      // Fix extension when Framer serves avif/webp behind a .jpg/.png URL
+      const corrected = correctExtension(localPath, mimeType);
+      if (corrected !== localPath) {
+        // Update cdnMap so HTML/CSS url-rewriting uses the corrected name
+        ctx.cdnMap.set(absUrl, corrected);
+        localPath = corrected;
+      }
 
       const ext = path.extname(localPath).toLowerCase();
       let finalData = data;

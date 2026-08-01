@@ -100,6 +100,78 @@ function TreeNodeRow({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
   );
 }
 
+// ─── Files tab with search ────────────────────────────────────────────────────
+
+function flattenTree(node: TreeNode, q: string): TreeNode {
+  if (node.type === "file") {
+    return (node.name.toLowerCase().includes(q) || (node.category ?? "").toLowerCase().includes(q)) ? node : { ...node, name: "" };
+  }
+  const filteredChildren = node.children
+    .map((c) => flattenTree(c, q))
+    .filter((c) => c.name !== "" || (c.type === "dir" && c.children.length > 0));
+  return { ...node, children: filteredChildren };
+}
+
+function FilesTab({ currentJob, fileTree }: { currentJob: ConversionJob | null; fileTree: TreeNode | null }) {
+  const [q, setQ] = useState("");
+  const trimmed = q.trim().toLowerCase();
+  const displayTree = fileTree && trimmed ? flattenTree(fileTree, trimmed) : fileTree;
+
+  if (!currentJob) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <Folder className="w-10 h-10 text-gray-200 mb-3" />
+        <p className="text-sm font-medium text-gray-500">No files yet</p>
+        <p className="text-xs text-gray-400 mt-1">Complete an extraction to browse the file tree</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-xs font-semibold text-gray-700">
+            {(() => { try { return new URL(currentJob.url).hostname; } catch { return currentJob.url; } })()}
+          </p>
+          <p className="text-[10px] text-gray-400">{currentJob.totalFiles} files · {formatBytes(currentJob.totalSizeBytes)}</p>
+        </div>
+        {currentJob.downloadPath && (
+          <a href={currentJob.downloadPath} download className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+            <Download className="w-3 h-3" />ZIP
+          </a>
+        )}
+      </div>
+      {/* Search */}
+      <div className="relative mb-3">
+        <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        </div>
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search files…"
+          className="block w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs bg-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        />
+        {q && (
+          <button onClick={() => setQ("")} className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-gray-400 hover:text-gray-600">
+            <XCircle className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {/* Tree */}
+      <div className="border border-gray-100 rounded-lg bg-gray-50/50 py-1 overflow-hidden">
+        {displayTree && displayTree.children.length > 0
+          ? displayTree.children.map((node, i) => <TreeNodeRow key={i} node={node} depth={0} />)
+          : <p className="text-xs text-gray-400 text-center py-4">No files match "{q}"</p>
+        }
+      </div>
+    </div>
+  );
+}
+
 // ─── Card flip variants ───────────────────────────────────────────────────────
 
 const flipVariants = {
@@ -728,43 +800,7 @@ export default function Home() {
 
           {/* ── Files tab ── */}
           {rightTab === "files" && (
-            <div>
-              {!currentJob ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Folder className="w-10 h-10 text-gray-200 mb-3" />
-                  <p className="text-sm font-medium text-gray-500">No files yet</p>
-                  <p className="text-xs text-gray-400 mt-1">Complete an extraction to browse the file tree</p>
-                </div>
-              ) : (
-                <div>
-                  {/* Header */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <p className="text-xs font-semibold text-gray-700">
-                        {(() => { try { return new URL(currentJob.url).hostname; } catch { return currentJob.url; } })()}
-                      </p>
-                      <p className="text-[10px] text-gray-400">{currentJob.totalFiles} files · {formatBytes(currentJob.totalSizeBytes)}</p>
-                    </div>
-                    {currentJob.downloadPath && (
-                      <a
-                        href={currentJob.downloadPath}
-                        download
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                      >
-                        <Download className="w-3 h-3" />
-                        ZIP
-                      </a>
-                    )}
-                  </div>
-                  {/* Tree */}
-                  <div className="border border-gray-100 rounded-lg bg-gray-50/50 py-1 overflow-hidden">
-                    {fileTree && fileTree.children.map((node, i) => (
-                      <TreeNodeRow key={i} node={node} depth={0} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <FilesTab currentJob={currentJob} fileTree={fileTree} />
           )}
         </div>
       </motion.aside>

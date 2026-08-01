@@ -105,6 +105,18 @@ router.get("/conversions/:id/stats", async (req, res): Promise<void> => {
   });
 });
 
+// Search files within a job
+router.get("/conversions/:id/files/search", async (req, res): Promise<void> => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const q = String(req.query.q ?? "").toLowerCase().trim();
+  const job = getJob(id);
+  if (!job) { res.status(404).json({ error: "Job not found" }); return; }
+  const results = q
+    ? job.files.filter((f) => f.path.toLowerCase().includes(q) || f.category.toLowerCase().includes(q))
+    : job.files;
+  res.json(results);
+});
+
 // Download ZIP
 router.get("/conversions/:id/download", async (req, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -179,7 +191,7 @@ router.get("/preview/:id/{*splat}", async (req, res): Promise<void> => {
     const decodedPath = path.join(jobDir, decodedRequested);
     if (decodedPath.startsWith(jobDir) && fs.existsSync(decodedPath)) {
       fullPath = decodedPath;
-    } else if (decodedPath.startsWith(jobDir) && fs.statSync(decodedPath).isDirectory?.() && fs.existsSync(path.join(decodedPath, "index.html"))) {
+    } else if (decodedPath.startsWith(jobDir) && fs.existsSync(decodedPath) && fs.statSync(decodedPath).isDirectory?.() && fs.existsSync(path.join(decodedPath, "index.html"))) {
       fullPath = path.join(decodedPath, "index.html");
     } else if (fs.existsSync(fullPath + ".html")) {
       // Try appending .html for extensionless page routes

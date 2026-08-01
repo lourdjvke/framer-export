@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Design Interface Replica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling on the main body */
+            background-color: #f7f7f7;
+            /* Dot grid background pattern */
+            background-image: radial-gradient(#d1d5db 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* Custom scrollbar for the right sidebar to match standard minimalist look */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+
+        /* Smooth transitions for interactive elements */
+        .panel-transition {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Iframe wrapper scaling logic */
+        .iframe-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .iframe-wrapper {
+            /* Simulating a fixed desktop size that scales down */
+            width: 1200px; /* Base simulated desktop width */
+            height: 800px;
+            background: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            /* Transform scale will be set by JS, initial approximation */
+            transform: scale(0.65); 
+            transform-origin: center center;
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
+            border-radius: 8px; /* Slight rounding for a premium feel, though the image might have sharp corners, it looks better usually */
+        }
+        
+        /* Specific tweaks to match the image precisely */
+        .btn-upgrade {
+            background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+            border: 1px solid #1d4ed8;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+        }
+        
+        .chat-history-stack {
+            position: relative;
+        }
+        .chat-history-stack::before,
+        .chat-history-stack::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 100%;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            z-index: -1;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+        .chat-history-stack::before {
+            transform: translateY(-8px) scale(0.96);
+        }
+        .chat-history-stack::after {
+            transform: translateY(-16px) scale(0.92);
+            z-index: -2;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col relative">
+
+    <!-- Top Navigation Bar -->
+    <header class="absolute top-2 left-2 right-2 h-14 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-xl flex items-center justify-between px-3 z-50 shadow-sm">
+        
+        <!-- Left Side: Project Name & Views -->
+        <div class="flex items-center space-x-3">
+            <button class="p-1.5 hover:bg-gray-100 rounded-md text-gray-700">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>
+            </button>
+            <div class="flex items-center space-x-1 cursor-pointer hover:bg-gray-50 px-2 py-1 rounded-md">
+                <span class="font-medium text-sm text-gray-800">Public API Bridge</span>
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+            
+            <div class="h-6 w-px bg-gray-200 mx-2"></div>
+            
+            <div class="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
+                <button class="px-3 py-1 text-sm font-medium bg-white shadow-sm rounded-md text-gray-800">Design</button>
+                <button class="px-3 py-1 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-md transition-colors">Build</button>
+            </div>
+            
+            <div class="h-6 w-px bg-gray-200 mx-2"></div>
+            
+            <!-- Usage Meter & Upgrade -->
+            <div class="flex items-center space-x-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div class="h-full bg-blue-500 w-full"></div>
+                    </div>
+                    <span class="text-xs font-medium text-gray-600">100%</span>
+                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                <button class="btn-upgrade text-white text-sm font-medium px-3 py-1.5 rounded-lg flex items-center space-x-1 shadow-sm transition-transform active:scale-95">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    <span>Upgrade</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Side: Actions -->
+        <div class="flex items-center space-x-2">
+            <button class="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Invite</button>
+            <button class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200 rounded-lg transition-colors border border-gray-200/50 flex items-center space-x-1.5">
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Republish</span>
+            </button>
+            <button class="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+            </button>
+            
+            <div class="h-6 w-px bg-gray-200 mx-1"></div>
+            
+            <button id="toggleRightPanelBtn" class="p-1.5 bg-gray-100 text-gray-700 border border-gray-200 rounded-lg shadow-sm hover:bg-gray-200 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace Area -->
+    <main class="flex-1 flex overflow-hidden pt-16">
+        
+        <!-- Central Canvas Area -->
+        <div class="flex-1 relative z-10 iframe-container" id="iframeContainer">
+            <!-- Simulated Iframe representing the design preview -->
+            <div class="iframe-wrapper shadow-2xl ring-1 ring-black/5" id="iframeWrapper">
+                <!-- Inner content simulating a webpage -->
+                <div class="w-full h-full bg-[#0a0a0a] text-white flex flex-col relative overflow-hidden font-sans">
+                    <!-- Nav simulation -->
+                    <div class="flex justify-between items-center p-6 px-12 border-b border-gray-800/50">
+                        <div class="font-bold tracking-wider text-sm flex items-center">
+                            BREACHER<span class="w-2 h-2 bg-white ml-1 inline-block"></span>
+                        </div>
+                        <div class="flex space-x-6 text-xs text-gray-400 font-medium">
+                            <span class="hover:text-white cursor-pointer transition-colors">USAGE</span>
+                            <span class="hover:text-white cursor-pointer transition-colors">STATUS</span>
+                            <span class="text-teal-400 bg-teal-900/30 px-2 py-0.5 rounded border border-teal-800/50">v1.0.4-stable</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Main Hero content simulation -->
+                    <div class="flex-1 flex px-12 py-16 items-center justify-between max-w-6xl mx-auto w-full">
+                        <div class="max-w-lg">
+                            <div class="inline-block border border-teal-800/50 bg-teal-900/20 text-teal-400 text-[10px] font-bold tracking-widest px-2 py-1 rounded-full mb-6">
+                                • API PROTECTION BYPASS
+                            </div>
+                            <h1 class="text-5xl font-bold leading-tight mb-4">
+                                Browser gets <br>
+                                <span class="text-teal-400">200.</span><br>
+                                Code gets <span class="text-red-500">403.</span><br>
+                                <span class="text-gray-500">Not anymore.</span>
+                            </h1>
+                            <p class="text-gray-400 text-sm mb-8 leading-relaxed">
+                                Stop messing with headless browsers and proxy rotators. Just prepend our endpoint to your target URL and get the JSON you want. We handle the TLS fingerprinting and residential IPs.
+                            </p>
+                            <div class="flex space-x-4">
+                                <button class="bg-teal-400 text-black px-6 py-3 text-sm font-bold flex items-center hover:bg-teal-300 transition-colors">
+                                    READ THE DOCS <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                                </button>
+                                <div class="px-6 py-3 text-xs text-gray-500 border border-gray-800 flex items-center">
+                                    No auth. No signup.
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Terminal simulation -->
+                        <div class="w-[450px] bg-[#111] rounded-lg border border-gray-800 shadow-2xl overflow-hidden relative">
+                            <!-- terminal header -->
+                            <div class="flex items-center px-4 py-3 bg-[#1a1a1a] border-b border-gray-800">
+                                <div class="flex space-x-2">
+                                    <div class="w-3 h-3 rounded-full bg-gray-600"></div>
+                                    <div class="w-3 h-3 rounded-full bg-gray-600"></div>
+                                    <div class="w-3 h-3 rounded-full bg-gray-600"></div>
+                                </div>
+                                <div class="flex-1 text-center text-xs text-gray-500 font-mono">
+                                    <span class="text-teal-500 mr-1">•</span> breacher-proxy-pool
+                                </div>
+                            </div>
+                            <!-- terminal body -->
+                            <div class="p-6 font-mono text-sm leading-relaxed text-gray-300">
+                                <div class="text-gray-500 mb-2">$ curl "https://breacher.dev/api?<br><span class="text-teal-400">target=https://api.example.com/protected-odds"</span></div>
+                                <div class="text-gray-300">
+                                    {<br>
+                                    &nbsp;&nbsp;<span class="text-gray-400">"status"</span>: <span class="text-blue-300">200</span>,<br>
+                                    &nbsp;&nbsp;<span class="text-gray-400">"breacher_stats"</span>: {<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"ip"</span>: <span class="text-green-300">"104.28.192.14"</span>,<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"asn"</span>: <span class="text-green-300">"AS7922"</span>,<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"tls_fingerprint"</span>: <span class="text-green-300">"ja3_matched"</span><br>
+                                    &nbsp;&nbsp;},<br>
+                                    &nbsp;&nbsp;<span class="text-gray-400">"data"</span>: {<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"match_id"</span>: <span class="text-green-300">"16115794"</span>,<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"home_odds"</span>: <span class="text-blue-300">2.15</span>,<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"away_odds"</span>: <span class="text-blue-300">3.40</span>,<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;<span class="text-gray-400">"draw"</span>: <span class="text-blue-300">3.10</span><br>
+                                    &nbsp;&nbsp;}<br>
+                                    }
+                                </div>
+                            </div>
+                            <!-- fake glow -->
+                            <div class="absolute -right-20 -top-20 w-64 h-64 bg-teal-500/10 blur-[100px] pointer-events-none"></div>
+                        </div>
+                    </div>
+                    <!-- bottom status bar simulation -->
+                    <div class="absolute bottom-6 left-12 flex items-center text-[10px] font-bold tracking-widest text-gray-500">
+                        <span class="w-1.5 h-1.5 bg-teal-400 rounded-full mr-2"></span> LIVE POOL STATUS
+                    </div>
+                    <div class="absolute bottom-6 right-12 text-teal-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+    </main>
+
+    <!-- Bottom Floating Toolbar -->
+    <div class="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white rounded-xl shadow-lg border border-gray-200 flex items-center p-1.5 space-x-1 z-40">
+        <button class="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors tooltip-trigger" title="Select">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="transform: rotate(-45deg)"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+        </button>
+        <button class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors tooltip-trigger" title="Pan">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11"></path></svg>
+        </button>
+        
+        <div class="h-6 w-px bg-gray-200 mx-1"></div>
+        
+        <button class="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+            <span>Chat</span>
+        </button>
+        <button class="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            <span>Draw</span>
+        </button>
+        <button class="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+            <span>Edit</span>
+        </button>
+        
+        <div class="h-6 w-px bg-gray-200 mx-1"></div>
+        
+        <button class="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+            <span>Generate</span>
+        </button>
+    </div>
+
+    <!-- Left AI Chat Panel Container -->
+    <div class="absolute bottom-6 left-6 w-[380px] z-40 flex flex-col justify-end space-y-4">
+        
+        <!-- Expandable History Area -->
+        <div id="chatHistory" class="panel-transition opacity-100 translate-y-0 origin-bottom">
+            <!-- Main Chat Card (Stacked effect) -->
+            <div class="bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-gray-200 p-5 chat-history-stack">
+                <div class="bg-blue-50/50 rounded-lg p-3 text-sm text-gray-800 mb-4 border border-blue-100/50">
+                    <p class="font-medium text-blue-900 mb-1">#1 - Stop the proxy pool starting from zero after every server restart What & Why The proxy</p>
+                    <p class="text-gray-400 text-xs">pool (in artifacts/api-server/src/lib/proxy-</p>
+                </div>
+                
+                <div class="flex items-center space-x-2 text-xs text-gray-500 mb-4">
+                    <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <span>3 actions - Worked for 28 seconds</span>
+                </div>
+                
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    Doing both in parallel — proxy persistence and rate limiting.
+                </p>
+            </div>
+        </div>
+
+        <!-- Input Area (Clicking this toggles history) -->
+        <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden flex flex-col">
+            <!-- Credits Notice -->
+            <div class="bg-gray-50/50 border-b border-gray-100 px-4 py-2.5 flex items-center space-x-3">
+                <div class="text-yellow-500">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"></path></svg>
+                </div>
+                <div class="text-xs">
+                    <span class="text-gray-600 block">You're out of credits.</span>
+                    <a href="#" class="text-blue-600 hover:underline">Upgrade to Core</a>
+                </div>
+            </div>
+            
+            <!-- Input Box -->
+            <div class="p-3" id="chatInputArea" style="cursor: pointer;">
+                <div class="flex flex-col border border-gray-200 rounded-xl bg-white shadow-sm hover:border-gray-300 transition-colors focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400">
+                    <textarea class="w-full bg-transparent border-none focus:ring-0 resize-none p-3 text-sm text-gray-800 placeholder-gray-400" rows="1" placeholder="Describe what you want to design..." style="min-height: 44px; max-height: 200px; overflow-y: auto;" oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px';"></textarea>
+                    
+                    <!-- Input tools -->
+                    <div class="px-2 pb-2 pt-1 flex justify-between items-center">
+                        <div class="flex space-x-1">
+                            <button class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                            </button>
+                            <button class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                            </button>
+                        </div>
+                        
+                        <div class="flex items-center space-x-1">
+                            <button class="flex items-center space-x-1 px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-600 text-xs rounded border border-gray-200 transition-colors">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                                <span>Economy</span>
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            <button class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                            </button>
+                            <button class="p-1.5 bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600 rounded-lg transition-colors ml-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Sidebar (Templates/Inspiration) -->
+    <aside id="rightPanel" class="absolute top-16 right-2 bottom-6 w-[340px] bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col z-40 panel-transition translate-x-0 opacity-100 overflow-hidden">
+        
+        <!-- Sidebar Header Tabs -->
+        <div class="flex p-2 border-b border-gray-100">
+            <button class="flex-1 py-1.5 text-sm font-medium bg-white shadow-sm border border-gray-200 rounded-md text-gray-800 flex items-center justify-center space-x-1.5">
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path></svg>
+                <span>Templates</span>
+            </button>
+            <button class="flex-1 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50 rounded-md flex items-center justify-center space-x-1.5 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                <span>Inspiration</span>
+            </button>
+            <button class="flex-1 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50 rounded-md flex items-center justify-center space-x-1.5 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                <span>Library</span>
+            </button>
+        </div>
+
+        <div class="p-4 flex-1 overflow-y-auto">
+            <h3 class="text-xs font-medium text-gray-500 mb-3">Starting points for your design work</h3>
+            
+            <!-- Search -->
+            <div class="relative mb-4">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+                <input type="text" class="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm bg-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="Search templates">
+            </div>
+
+            <!-- Tags -->
+            <div class="flex flex-wrap gap-2 mb-6">
+                <span class="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-100 cursor-pointer">All</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Landing Pages</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Mobile</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Prototypes</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Posters</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Social Posts</span>
+                <span class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full hover:bg-gray-200 cursor-pointer transition-colors">Email</span>
+            </div>
+
+            <!-- Grid of Templates -->
+            <div class="grid grid-cols-2 gap-4 pb-4">
+                
+                <!-- Item 1 (Tall) -->
+                <div class="group cursor-pointer flex flex-col">
+                    <div class="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors bg-gray-50 relative aspect-[3/4]">
+                        <!-- Fallback image styling imitating the poster -->
+                        <div class="absolute inset-0 bg-[#f1481b] flex flex-col justify-between p-2 text-white">
+                            <div class="text-[8px] font-bold tracking-widest text-center mt-1">DEEP ORANGE</div>
+                            <div class="flex-1 flex items-center justify-center relative overflow-hidden">
+                                <!-- abstract head shape placeholder -->
+                                <div class="w-24 h-32 bg-orange-900/40 rounded-full mix-blend-overlay absolute -right-4 -bottom-4"></div>
+                                <div class="text-4xl font-serif font-bold tracking-tighter opacity-80 z-10">O S</div>
+                            </div>
+                            <div class="text-[6px] text-center border-t border-white/20 pt-1">
+                                SATURDAY 24 AUGUST 2024<br>
+                                THE FOUNDRY LONDON
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs font-medium text-gray-800 truncate">Orange Portrait Event Pos...</div>
+                    <div class="text-[10px] text-gray-500">Posters</div>
+                </div>
+
+                <div class="flex flex-col space-y-4">
+                    <!-- Item 2 (Wide) -->
+                    <div class="group cursor-pointer flex flex-col">
+                        <div class="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors bg-gray-900 aspect-video relative">
+                            <!-- Dashboard abstract -->
+                            <div class="absolute inset-0 p-2 flex flex-col space-y-1">
+                                <div class="h-2 bg-gray-800 rounded w-1/3"></div>
+                                <div class="flex space-x-1 flex-1">
+                                    <div class="flex-1 bg-gray-800 rounded"></div>
+                                    <div class="w-1/4 bg-gray-800 rounded flex flex-col justify-end space-y-0.5 p-0.5">
+                                        <div class="h-1 bg-green-500/50 w-full rounded"></div>
+                                        <div class="h-2 bg-green-500/50 w-full rounded"></div>
+                                        <div class="h-1.5 bg-green-500/50 w-full rounded"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-xs font-medium text-gray-800 truncate">Mission Control Bento Da...</div>
+                        <div class="text-[10px] text-gray-500">Prototypes</div>
+                    </div>
+
+                    <!-- Item 3 (Wide) -->
+                    <div class="group cursor-pointer flex flex-col">
+                        <div class="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors bg-white aspect-video relative flex">
+                           <!-- Abstract Spring layout -->
+                           <div class="w-1/2 bg-[#ff5a36] text-white p-2 flex flex-col justify-center">
+                                <div class="text-[8px]">Spring</div>
+                                <div class="text-sm font-serif italic">Care <span class="text-xs">-40%</span></div>
+                           </div>
+                           <div class="w-1/2 p-2 flex flex-col justify-between">
+                                <div class="text-right text-[8px] font-bold">248</div>
+                                <div class="flex space-x-1 h-4">
+                                    <div class="flex-1 border border-gray-200 bg-gray-50 rounded-sm"></div>
+                                    <div class="w-4 bg-black rounded-sm"></div>
+                                </div>
+                           </div>
+                        </div>
+                        <div class="text-xs font-medium text-gray-800 truncate">Swiss Grid CRM Dashbo...</div>
+                        <div class="text-[10px] text-gray-500">Prototypes</div>
+                    </div>
+                </div>
+
+                <!-- Item 4 (Tall) -->
+                <div class="group cursor-pointer flex flex-col">
+                    <div class="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors bg-[#e9f0ea] relative aspect-[3/4] p-3 flex flex-col">
+                        <div class="text-center border-b border-gray-800/20 pb-2 mb-2">
+                            <div class="font-serif text-sm tracking-wide text-gray-900">THE DINNER</div>
+                            <div class="font-serif text-sm tracking-wide text-gray-900">PARTY</div>
+                        </div>
+                        <div class="flex-1 border border-gray-800/20 flex items-center justify-center bg-[#d1dec5] rounded-t-full mt-2 relative">
+                            <!-- Abstract table -->
+                            <div class="absolute bottom-2 w-3/4 h-1/3 bg-white/50 border border-gray-800/20 shadow-sm flex items-end justify-around px-1 pb-1">
+                                <div class="w-1.5 h-3 bg-gray-800/30 rounded-t-sm"></div>
+                                <div class="w-1.5 h-3 bg-gray-800/30 rounded-t-sm"></div>
+                                <div class="w-1.5 h-3 bg-gray-800/30 rounded-t-sm"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs font-medium text-gray-800 truncate">Severance Dinner Party In...</div>
+                    <div class="text-[10px] text-gray-500">Posters</div>
+                </div>
+
+                <!-- Item 5 (Squareish) -->
+                <div class="group cursor-pointer flex flex-col">
+                    <div class="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors bg-[#111] relative aspect-square p-3">
+                        <div class="text-[8px] text-gray-500 mb-4 text-center">Sleep above the weather</div>
+                        <div class="flex justify-between items-end h-full pb-2">
+                            <div class="text-[10px] text-orange-500">01</div>
+                            <div class="w-1/2 h-8 bg-gray-800 rounded border border-gray-700"></div>
+                        </div>
+                    </div>
+                    <div class="text-xs font-medium text-gray-800 truncate">Neon Horizons Travel Car...</div>
+                    <div class="text-[10px] text-gray-500">Social Posts</div>
+                </div>
+
+            </div>
+        </div>
+    </aside>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Toggle Chat History Panel
+            const chatInputArea = document.getElementById('chatInputArea');
+            const chatHistory = document.getElementById('chatHistory');
+            let isChatOpen = true;
+
+            chatInputArea.addEventListener('click', (e) => {
+                // Prevent trigger if clicking on the actual textarea or buttons inside
+                if(e.target.tagName !== 'DIV' && e.target !== chatInputArea) return;
+
+                isChatOpen = !isChatOpen;
+                if (isChatOpen) {
+                    chatHistory.classList.remove('opacity-0', 'translate-y-4', 'pointer-events-none');
+                    chatHistory.classList.add('opacity-100', 'translate-y-0');
+                    // Ensure space is taken up
+                    chatHistory.style.height = 'auto'; 
+                    chatHistory.style.marginBottom = '1rem';
+                } else {
+                    chatHistory.classList.remove('opacity-100', 'translate-y-0');
+                    chatHistory.classList.add('opacity-0', 'translate-y-4', 'pointer-events-none');
+                    // Collapse space smoothly
+                    setTimeout(() => {
+                        if(!isChatOpen) { // double check state hasn't changed back
+                            chatHistory.style.height = '0px';
+                            chatHistory.style.marginBottom = '0px';
+                            chatHistory.style.overflow = 'hidden';
+                        }
+                    }, 300); // Wait for transition to finish
+                }
+            });
+
+            // Set initial state based on default HTML classes
+            chatHistory.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            chatHistory.style.marginBottom = '1rem';
+
+
+            // 2. Toggle Right Sidebar
+            const toggleRightPanelBtn = document.getElementById('toggleRightPanelBtn');
+            const rightPanel = document.getElementById('rightPanel');
+            let isRightPanelOpen = true;
+
+            toggleRightPanelBtn.addEventListener('click', () => {
+                isRightPanelOpen = !isRightPanelOpen;
+                if (isRightPanelOpen) {
+                    rightPanel.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none');
+                    rightPanel.classList.add('translate-x-0', 'opacity-100');
+                    toggleRightPanelBtn.classList.add('bg-gray-100');
+                } else {
+                    rightPanel.classList.remove('translate-x-0', 'opacity-100');
+                    rightPanel.classList.add('translate-x-full', 'opacity-0', 'pointer-events-none');
+                    toggleRightPanelBtn.classList.remove('bg-gray-100');
+                }
+            });
+
+
+            // 3. Iframe Wrapper Scaling Logic
+            // The iframe wrapper needs to look like a desktop screen floating in the center.
+            const container = document.getElementById('iframeContainer');
+            const wrapper = document.getElementById('iframeWrapper');
+            
+            let currentScale = 1;
+            let panX = 0;
+            let panY = 0;
+
+            function updateTransform() {
+                wrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${currentScale})`;
+            }
+            
+            function scaleWrapper() {
+                // Get available space in container
+                const containerWidth = container.clientWidth;
+                const containerHeight = container.clientHeight;
+                
+                // Original simulated size
+                const baseWidth = 1200;
+                const baseHeight = 800;
+
+                // Add padding so it doesn't touch edges
+                const padding = 120; // Accounts for top bar, bottom bar, and sidebars generally
+                
+                const availableWidth = containerWidth - padding;
+                const availableHeight = containerHeight - padding;
+
+                // Calculate scale needed to fit width and height
+                const scaleX = availableWidth / baseWidth;
+                const scaleY = availableHeight / baseHeight;
+
+                currentScale = Math.min(scaleX, scaleY);
+                
+                // Hardcap the scale so it always looks like a preview, never full screen
+                currentScale = Math.min(currentScale, 0.75); 
+                panX = 0;
+                panY = 0;
+
+                // Apply transform
+                updateTransform();
+            }
+
+            // Initial scale
+            scaleWrapper();
+
+            // Rescale on window resize
+            window.addEventListener('resize', scaleWrapper);
+
+            // Canvas Zoom and Pan implementation
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault(); // Prevent page scrolling
+
+                // Check for pinch-to-zoom (trackpads often trigger ctrlKey) or explicit Ctrl+Scroll
+                if (e.ctrlKey || e.metaKey) {
+                    const zoomSensitivity = 0.005;
+                    const delta = -e.deltaY * zoomSensitivity;
+                    currentScale = Math.max(0.1, Math.min(currentScale + delta, 5));
+                } else {
+                    // Standard scroll behaves as a pan
+                    panX -= e.deltaX;
+                    panY -= e.deltaY;
+                }
+                updateTransform();
+            }, { passive: false });
+
+            // Allow mouse-drag to pan
+            let isDraggingCanvas = false;
+            let startDragX = 0;
+            let startDragY = 0;
+
+            container.addEventListener('mousedown', (e) => {
+                // Drag if middle mouse clicked, OR if clicking directly on the empty background container
+                if (e.button === 1 || e.target === container) {
+                    isDraggingCanvas = true;
+                    startDragX = e.clientX - panX;
+                    startDragY = e.clientY - panY;
+                    container.style.cursor = 'grabbing';
+                    e.preventDefault();
+                }
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isDraggingCanvas) return;
+                panX = e.clientX - startDragX;
+                panY = e.clientY - startDragY;
+                updateTransform();
+            });
+
+            window.addEventListener('mouseup', () => {
+                isDraggingCanvas = false;
+                container.style.cursor = 'default';
+            });
+        });
+    </script>
+</body>
+</html>

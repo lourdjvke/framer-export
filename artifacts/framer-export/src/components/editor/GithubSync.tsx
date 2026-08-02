@@ -32,7 +32,7 @@ async function pushToGithub(
   const createRes = await fetch("https://api.github.com/user/repos", {
     method: "POST",
     headers: authHeader,
-    body: JSON.stringify({ name: repoName, description: "Created with Visage", private: false, auto_init: false }),
+    body: JSON.stringify({ name: repoName, description: "Created with Breacher", private: false, auto_init: false }),
   });
 
   if (!createRes.ok && createRes.status !== 422) {
@@ -62,7 +62,7 @@ async function pushToGithub(
   // ── Step 3: Create or update the file ──────────────────────────────────────
   const content = btoa(unescape(encodeURIComponent(html)));
   const body: Record<string, string> = {
-    message: "Update from Visage",
+    message: "Update from Breacher",
     content,
     ...(existingSha ? { sha: existingSha } : {}),
   };

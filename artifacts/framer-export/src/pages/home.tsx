@@ -6,6 +6,11 @@ import {
   LayoutTemplate, BookOpen, Layers, AlertTriangle, FileCode2,
   Download, Loader2, FileText, Image, File,
 } from "lucide-react";
+import {
+  getMimeType, isTextFile, isCssFile, isHtmlFile,
+  rewriteHtmlAssets, rewriteCssUrls,
+  type BlobUrlMap,
+} from "@/lib/assetRewriter";
 import { useAuth } from "@/contexts/AuthContext";
 import { AuthOverlay } from "@/components/auth/AuthOverlay";
 import { GithubCredentialsModal } from "@/components/auth/GithubCredentialsModal";
@@ -230,6 +235,15 @@ export default function Home() {
   // Iframe ref for element inspector
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // Track blob URLs created during device import so we can revoke on unmount
+  const blobUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, []);
+
   // Whether any preview is loaded
   const hasPreview = !!(previewHtml || (framerJobId && framerJobStatus === "done"));
 
@@ -245,8 +259,11 @@ export default function Home() {
     if (authLoading) return;
     if (!user) {
       setStage("auth");
+    } else if (stage === "auth") {
+      // User already authenticated (session restore) → skip to editor
+      setStage("editor");
     }
-  }, [user, authLoading]);
+  }, [user, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auth flow ──────────────────────────────────────────────────────────────
 
@@ -360,20 +377,36 @@ export default function Home() {
   async function doDeviceImport(files: FileList) {
     const allFiles = Array.from(files);
 
-    // Build file records — strip the top-level folder prefix from webkitRelativePath
+    // Revoke any prior blob URLs
+    blobUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    blobUrlsRef.current = [];
+
+    const blobUrls: BlobUrlMap = new Map();
+    const cssContents: Map<string, string> = new Map();
     const deviceFileList: DeviceFile[] = [];
+
+    // First pass: read all files, create blob URLs for binaries, store text content
     for (const file of allFiles) {
-      if (!file.name.endsWith(".html") && !file.name.endsWith(".css") && !file.name.endsWith(".js")) {
-        // Non-text file — add to tree with placeholder content
-        const rawPath = file.webkitRelativePath || file.name;
-        const path = rawPath.includes("/") ? rawPath.slice(rawPath.indexOf("/") + 1) : rawPath;
-        deviceFileList.push({ path: path || file.name, content: "", size: file.size });
-        continue;
-      }
-      const rawPath = file.webkitRelativePath || file.name;
+      const rawPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
       const path = rawPath.includes("/") ? rawPath.slice(rawPath.indexOf("/") + 1) : rawPath;
-      const content = await file.text();
-      deviceFileList.push({ path: path || file.name, content, size: file.size });
+      const filePath = path || file.name;
+
+      if (isTextFile(filePath)) {
+        const content = await file.text();
+        if (isCssFile(filePath)) {
+          cssContents.set(filePath, content);
+        }
+        deviceFileList.push({ path: filePath, content, size: file.size });
+      } else {
+        // Binary asset — create a blob URL
+        const buf = await file.arrayBuffer();
+        const mime = getMimeType(filePath);
+        const blob = new Blob([buf], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        blobUrls.set(filePath, blobUrl);
+        blobUrlsRef.current.push(blobUrl);
+        deviceFileList.push({ path: filePath, content: "", size: file.size });
+      }
     }
 
     // Sort: index.html first, then by path
@@ -389,16 +422,24 @@ export default function Home() {
     // Find index.html or first html file
     const indexFile =
       deviceFileList.find((f) => f.path === "index.html") ||
-      deviceFileList.find((f) => f.path.endsWith(".html"));
+      deviceFileList.find((f) => isHtmlFile(f.path));
 
-    if (!indexFile) {
+    if (!indexFile || !indexFile.content) {
       toast({ title: "No HTML file found", description: "Please include an index.html.", variant: "destructive" });
       return;
     }
 
+    // Rewrite asset references in the HTML to blob URLs / inlined CSS
+    const processedHtml = rewriteHtmlAssets(
+      indexFile.content,
+      blobUrls,
+      cssContents,
+      indexFile.path
+    );
+
     setDeviceActivePath(indexFile.path);
-    setPreviewHtml(indexFile.content);
-    setRightTab("files"); // auto-switch to files tab
+    setPreviewHtml(processedHtml);
+    setRightTab("files");
   }
 
   // ── Current HTML getter (used by GithubSync at push-time) ─────────────────
@@ -417,14 +458,13 @@ export default function Home() {
   }, [previewHtml]);
 
   // ── Handle HTML change from ElementInspector ───────────────────────────────
-
-  const handleHtmlChange = useCallback((html: string) => {
-    // Only update previewHtml for srcDoc iframes (device/template)
-    // For Framer src iframes, the DOM lives in the iframe — we serialize at push time
-    if (previewHtml !== null) {
-      setPreviewHtml(html);
-    }
-  }, [previewHtml]);
+  // We intentionally do NOT update previewHtml here — doing so would reload the
+  // srcDoc iframe and detach the inspected element. Instead, we always read the
+  // live DOM at export/push time via getCurrentHtml().
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleHtmlChange = useCallback((_html: string) => {
+    // no-op: edits stay in the live iframe DOM; serialized only on export
+  }, []);
 
   // ── Download current project as HTML ──────────────────────────────────────
 
@@ -690,7 +730,7 @@ export default function Home() {
                 {/* Simulated hero */}
                 <div className="flex justify-between items-center p-6 px-12 border-b border-gray-800/50">
                   <div className="font-bold tracking-wider text-sm flex items-center">
-                    VISAGE<span className="w-2 h-2 bg-white ml-1 inline-block" />
+                    BREACHER<span className="w-2 h-2 bg-white ml-1 inline-block" />
                   </div>
                   <div className="flex gap-6 text-xs text-gray-400 font-medium">
                     <span className="hover:text-white cursor-pointer transition-colors">DOCS</span>
@@ -729,11 +769,11 @@ export default function Home() {
                         <div className="w-3 h-3 rounded-full bg-gray-600" />
                       </div>
                       <div className="flex-1 text-center text-xs text-gray-500 font-mono">
-                        <span className="text-teal-500 mr-1">•</span> visage-editor
+                        <span className="text-teal-500 mr-1">•</span> breacher-editor
                       </div>
                     </div>
                     <div className="p-5 font-mono text-sm leading-relaxed text-gray-300">
-                      <div className="text-gray-500 mb-2">$ visage import --framer</div>
+                      <div className="text-gray-500 mb-2">$ breacher import --framer</div>
                       <div className="text-teal-400 mb-1">✓ Fetching Framer export…</div>
                       <div className="text-teal-400 mb-1">✓ Stripping layout wrappers…</div>
                       <div className="text-gray-300 mb-1">→ Opening in editor…</div>
@@ -744,7 +784,7 @@ export default function Home() {
 
                 <div className="absolute bottom-5 left-12 flex items-center text-[10px] font-bold tracking-widest text-gray-500">
                   <span className="w-1.5 h-1.5 bg-teal-400 rounded-full mr-2" />
-                  VISAGE EDITOR READY
+                  BREACHER EDITOR READY
                 </div>
               </div>
             )}

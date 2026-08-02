@@ -16,6 +16,7 @@ export function AuthOverlay({ onAuthenticated }: AuthOverlayProps) {
   const [activeTile, setActiveTile] = useState<Tile>(null);
   const [framerUrl, setFramerUrl] = useState("");
   const [showLogin, setShowLogin] = useState(false);
+  const [showTiles, setShowTiles] = useState(true);
   const [loginMethod, setLoginMethod] = useState<LoginMethod>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,7 +57,7 @@ export function AuthOverlay({ onAuthenticated }: AuthOverlayProps) {
   }
 
   function handleTileClick(tile: Tile) {
-    if (activeTile === tile) return; // X button handles collapse
+    if (activeTile === tile) return;
     setActiveTile(tile);
     setShowLogin(false);
   }
@@ -82,7 +83,13 @@ export function AuthOverlay({ onAuthenticated }: AuthOverlayProps) {
     }
   }
 
-  // When Framer is active, it grows; others shrink. When nothing active, all equal.
+  /** Direct login — hides tiles, shows login panel immediately */
+  function handleDirectLogin() {
+    setShowTiles(false);
+    setShowLogin(true);
+    setActiveTile(null);
+  }
+
   const framerExpanded = activeTile === "framer";
 
   return (
@@ -108,198 +115,226 @@ export function AuthOverlay({ onAuthenticated }: AuthOverlayProps) {
           className="text-center"
         >
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-            Visage
+            Breacher
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Import your project to get started
+            {showTiles ? "Import your project to get started" : "Sign in to continue"}
           </p>
         </motion.div>
 
         {/* Tiles */}
-        <div className="flex gap-4 w-full justify-center items-start">
-          {/* Tile: Import from Framer */}
-          <motion.div
-            layout
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className={`relative rounded-xl border cursor-pointer select-none overflow-hidden
-              ${framerExpanded
-                ? "border-gray-900 bg-white/90 shadow-lg"
-                : "border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
-              }`}
-            style={{
-              backdropFilter: "blur(8px)",
-              flex: framerExpanded ? "2.2 1 0%" : "1 1 0%",
-              maxWidth: framerExpanded ? "380px" : "220px",
-              minWidth: framerExpanded ? "240px" : "0",
-            }}
-            onClick={() => handleTileClick("framer")}
-            whileHover={!framerExpanded ? { scale: 1.02 } : {}}
-            whileTap={!framerExpanded ? { scale: 0.98 } : {}}
-          >
-            {/* X button — top-right when expanded */}
-            <AnimatePresence>
-              {framerExpanded && (
-                <motion.button
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-3 right-3 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 transition-colors"
-                  onClick={collapseTile}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </motion.button>
-              )}
-            </AnimatePresence>
-
-            <div className="p-6 flex flex-col items-center gap-3">
-              <div className={`w-12 h-12 rounded-lg flex items-center justify-center
-                ${framerExpanded ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"}`}>
-                <Link2 className="w-6 h-6" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-semibold text-gray-800">Import from Framer</p>
-                <p className="text-xs text-gray-500 mt-0.5">Paste a Framer share link</p>
-              </div>
-            </div>
-
-            {/* Framer URL input */}
-            <AnimatePresence>
-              {framerExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.25 }}
-                  className="overflow-hidden border-t border-gray-200"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="p-3">
-                    <input
-                      autoFocus
-                      type="url"
-                      value={framerUrl}
-                      onChange={(e) => setFramerUrl(e.target.value)}
-                      onKeyDown={handleFramerKeyDown}
-                      placeholder="https://framer.com/share/..."
-                      className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
-                    />
-                    <button
-                      disabled={!framerUrl.trim()}
-                      onClick={() => { if (framerUrl.trim()) setShowLogin(true); }}
-                      className="w-full mt-2 bg-gray-900 text-white rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40 hover:bg-gray-700 transition-colors flex items-center justify-center gap-1.5"
+        <AnimatePresence>
+          {showTiles && (
+            <motion.div
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              transition={{ duration: 0.25 }}
+              className="flex gap-4 w-full justify-center items-start"
+            >
+              {/* Tile: Import from Framer */}
+              <motion.div
+                layout
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className={`relative rounded-xl border cursor-pointer select-none overflow-hidden
+                  ${framerExpanded
+                    ? "border-gray-900 bg-white/90 shadow-lg"
+                    : "border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
+                  }`}
+                style={{
+                  backdropFilter: "blur(8px)",
+                  flex: framerExpanded ? "2.2 1 0%" : "1 1 0%",
+                  maxWidth: framerExpanded ? "380px" : "220px",
+                  minWidth: framerExpanded ? "240px" : "0",
+                }}
+                onClick={() => handleTileClick("framer")}
+                whileHover={!framerExpanded ? { scale: 1.02 } : {}}
+                whileTap={!framerExpanded ? { scale: 0.98 } : {}}
+              >
+                <AnimatePresence>
+                  {framerExpanded && (
+                    <motion.button
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute top-3 right-3 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 transition-colors"
+                      onClick={collapseTile}
                     >
-                      Continue <ArrowRight className="w-3 h-3" />
-                    </button>
-                    <p className="text-[10px] text-gray-400 mt-1.5 text-center">Or press Enter</p>
+                      <X className="w-3.5 h-3.5" />
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+
+                <div className="p-6 flex flex-col items-center gap-3">
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center
+                    ${framerExpanded ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    <Link2 className="w-6 h-6" />
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-
-          {/* Tile: Import from Device */}
-          <motion.div
-            layout
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className={`relative rounded-xl border cursor-pointer select-none overflow-hidden
-              ${activeTile === "device"
-                ? "border-gray-900 bg-white/90 shadow-lg"
-                : "border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
-              }`}
-            style={{
-              backdropFilter: "blur(8px)",
-              flex: framerExpanded ? "0.7 1 0%" : "1 1 0%",
-              maxWidth: framerExpanded ? "160px" : "220px",
-              minWidth: "110px",
-            }}
-            onClick={() => {
-              handleTileClick("device");
-              if (activeTile !== "device") setTimeout(() => fileInputRef.current?.click(), 200);
-            }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <div className="p-6 flex flex-col items-center gap-3">
-              <div className={`w-12 h-12 rounded-lg flex items-center justify-center
-                ${activeTile === "device" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"}`}>
-                <Upload className="w-6 h-6" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-semibold text-gray-800">
-                  {framerExpanded ? "Device" : "Import from Device"}
-                </p>
-                {!framerExpanded && <p className="text-xs text-gray-500 mt-0.5">Upload an HTML folder</p>}
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {activeTile === "device" && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.25 }}
-                  className="overflow-hidden border-t border-gray-200"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="p-3 text-center">
-                    {selectedFiles ? (
-                      <p className="text-xs text-green-600 font-medium">
-                        {selectedFiles.length} file{selectedFiles.length > 1 ? "s" : ""} selected
-                      </p>
-                    ) : (
-                      <button
-                        className="text-xs text-gray-600 underline"
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        Choose files
-                      </button>
-                    )}
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-gray-800">Import from Framer</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Paste a Framer share link</p>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+                </div>
 
-          {/* Tile: Browse Templates */}
-          <motion.div
-            layout
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className="relative rounded-xl border cursor-pointer select-none border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
-            style={{
-              backdropFilter: "blur(8px)",
-              flex: framerExpanded ? "0.7 1 0%" : "1 1 0%",
-              maxWidth: framerExpanded ? "160px" : "220px",
-              minWidth: "110px",
-            }}
-            onClick={() => {
-              setActiveTile(null);
-              setShowLogin(true);
-            }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <div className="p-6 flex flex-col items-center gap-3">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-gray-100 text-gray-600">
-                <LayoutTemplate className="w-6 h-6" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-semibold text-gray-800">
-                  {framerExpanded ? "Templates" : "Browse Templates"}
-                </p>
-                {!framerExpanded && <p className="text-xs text-gray-500 mt-0.5">Community projects</p>}
-              </div>
-            </div>
-          </motion.div>
-        </div>
+                <AnimatePresence>
+                  {framerExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="overflow-hidden border-t border-gray-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="p-3">
+                        <input
+                          autoFocus
+                          type="url"
+                          value={framerUrl}
+                          onChange={(e) => setFramerUrl(e.target.value)}
+                          onKeyDown={handleFramerKeyDown}
+                          placeholder="https://framer.com/share/..."
+                          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
+                        />
+                        <button
+                          disabled={!framerUrl.trim()}
+                          onClick={() => { if (framerUrl.trim()) setShowLogin(true); }}
+                          className="w-full mt-2 bg-gray-900 text-white rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40 hover:bg-gray-700 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          Continue <ArrowRight className="w-3 h-3" />
+                        </button>
+                        <p className="text-[10px] text-gray-400 mt-1.5 text-center">Or press Enter</p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
 
-        {/* Hidden file input — supports both single files and full folder */}
+              {/* Tile: Import from Device */}
+              <motion.div
+                layout
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className={`relative rounded-xl border cursor-pointer select-none overflow-hidden
+                  ${activeTile === "device"
+                    ? "border-gray-900 bg-white/90 shadow-lg"
+                    : "border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
+                  }`}
+                style={{
+                  backdropFilter: "blur(8px)",
+                  flex: framerExpanded ? "0.7 1 0%" : "1 1 0%",
+                  maxWidth: framerExpanded ? "160px" : "220px",
+                  minWidth: "110px",
+                }}
+                onClick={() => {
+                  handleTileClick("device");
+                  if (activeTile !== "device") setTimeout(() => fileInputRef.current?.click(), 200);
+                }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <div className="p-6 flex flex-col items-center gap-3">
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center
+                    ${activeTile === "device" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-gray-800">
+                      {framerExpanded ? "Device" : "Import from Device"}
+                    </p>
+                    {!framerExpanded && <p className="text-xs text-gray-500 mt-0.5">Upload an HTML folder</p>}
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {activeTile === "device" && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="overflow-hidden border-t border-gray-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="p-3 text-center">
+                        {selectedFiles ? (
+                          <p className="text-xs text-green-600 font-medium">
+                            {selectedFiles.length} file{selectedFiles.length > 1 ? "s" : ""} selected
+                          </p>
+                        ) : (
+                          <button
+                            className="text-xs text-gray-600 underline"
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            Choose files
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
+              {/* Tile: Browse Templates */}
+              <motion.div
+                layout
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="relative rounded-xl border cursor-pointer select-none border-gray-300 bg-white/60 hover:border-gray-500 hover:bg-white/80"
+                style={{
+                  backdropFilter: "blur(8px)",
+                  flex: framerExpanded ? "0.7 1 0%" : "1 1 0%",
+                  maxWidth: framerExpanded ? "160px" : "220px",
+                  minWidth: "110px",
+                }}
+                onClick={() => {
+                  setActiveTile(null);
+                  setShowLogin(true);
+                }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <div className="p-6 flex flex-col items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-gray-100 text-gray-600">
+                    <LayoutTemplate className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-gray-800">
+                      {framerExpanded ? "Templates" : "Browse Templates"}
+                    </p>
+                    {!framerExpanded && <p className="text-xs text-gray-500 mt-0.5">Community projects</p>}
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Direct login link — shown only when tiles are visible and login panel is not open */}
+        <AnimatePresence>
+          {showTiles && !showLogin && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="text-xs text-gray-400"
+            >
+              Already have an account?{" "}
+              <button
+                onClick={handleDirectLogin}
+                className="text-gray-700 font-medium underline underline-offset-2 hover:text-gray-900 transition-colors"
+              >
+                Log in
+              </button>
+            </motion.p>
+          )}
+        </AnimatePresence>
+
+        {/* Hidden file input */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          // @ts-ignore — webkitdirectory is non-standard but supported in all modern browsers
+          // @ts-ignore
           webkitdirectory=""
           accept=".html,.css,.js,.json,.png,.jpg,.jpeg,.gif,.svg,.woff,.woff2,.ttf"
           className="hidden"
@@ -317,8 +352,16 @@ export function AuthOverlay({ onAuthenticated }: AuthOverlayProps) {
               className="w-full max-w-sm bg-white/90 backdrop-blur-sm rounded-2xl border border-gray-200 shadow-xl p-6"
             >
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-gray-800">Login to continue</h2>
-                <button onClick={() => setShowLogin(false)} className="text-gray-400 hover:text-gray-600">
+                <h2 className="text-sm font-semibold text-gray-800">
+                  {isSignUp ? "Create your account" : "Welcome back"}
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowLogin(false);
+                    if (!showTiles) setShowTiles(true);
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
                   <X className="w-4 h-4" />
                 </button>
               </div>

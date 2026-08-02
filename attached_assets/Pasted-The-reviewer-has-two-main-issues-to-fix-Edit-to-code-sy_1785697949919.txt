@@ -1,0 +1,54 @@
+The reviewer has two main issues to fix:
+
+Edit-to-code synchronization is broken: When ElementInspector calls onHtmlChange, it updates previewHtml, which reloads the srcDoc iframe, which destroys the old document. The inspector's inspected.el now references a detached DOM element. Subsequent edits mutate the detached element.
+Fix: Don't reload the iframe on every edit. Instead, keep a separate "export HTML" state that's only used for GitHub push / download, and update it in a debounced way. The live DOM mutations happen in the iframe, and we only serialize for export purposes.
+
+The real solution is to stop calling setPreviewHtml during edits altogether. previewHtml should only be set when initially loading or switching files, while the live DOM mutations stay in the iframe. When exporting or downloading, I'll read directly from the iframe's current document at that moment instead of maintaining a separate state.
+
+For the folder import issue with assets, I need to generate Blob URLs for all non-text files and rewrite the HTML to reference those URLs so CSS, images, fonts, and scripts resolve correctly when loaded via srcDoc.
+
+I'll parse the HTML with DOMParser and systematically replace all local file references in href, src, and other attributes with their corresponding Blob URLs. The implementation reads all files as binary, creates a path-to-bloburl map, then rewrites the HTML accordingly. Writing import logic... Rewriting more element types...
+
+Actually, I'm realizing there's a potential issue with using blob URLs in a sandboxed iframe. Even though the sandbox allows same-origin access, blob URLs are origin-specific and might not be accessible from the iframe context, especially since srcDoc creates content from a null origin. I need to reconsider this approach.
+
+Beyond that, there's the complication that CSS files can reference other assets through relative paths, and those would try to resolve against the blob URL's non-existent directory structure. Handling that would require parsing and rewriting URLs within the CSS itself, which adds significant complexity. I should probably explore a simpler solution instead.
+
+Let me focus on two concrete improvements: first, fixing the edit sync issue so the iframe doesn't reload when the HTML changes, and second, handling device imports by creating blob URLs for binary assets while rewriting the HTML's direct references and inlining CSS with rewritten URL references. I'll start implementing these changes now.
+
+The edit sync fix involves removing the reload trigger from the HTML change handler so the iframe content stays in place, then reading the current HTML directly from the live editor state. I'm creating a helper function that reads the current HTML directly from the iframe's live DOM at export time, bypassing the state update that would trigger a reload. Then I'd remove the onHtmlChange callback from ElementInspector so edits stay in the live DOM instead of serializing back to state.
+
+The one edge case I need to handle is when the user switches between files in the device tree—I should serialize the current iframe's DOM and save it back to deviceFiles for that file before loading the new one, so edits don't get lost.
+
+For the implementation, I won't pass onHtmlChange to ElementInspector from home.tsx since we're reading the live DOM directly now. The key fixes are making getCurrentHtml always read from the live DOM, updating doDeviceImport to create Blob URLs for assets and rewrite the HTML accordingly, and cleaning up those blob URLs when the component unmounts.
+
+Now for handling the Blob URLs...
+
+Writing utility functions... Finishing the path validation checks, then setting up the device import function to read files, extract their relative paths, determine MIME types, and begin categorizing them by file type. For non-text files, I'm creating blob URLs and storing them in a map for later reference. Then I'm storing all the blob URLs in a ref so they can be cleaned up when the component unmounts. Next, I'm sorting the file list to prioritize index.html, then searching for either an index.html file or any HTML file to use as the entry point.
+
+If no HTML file is found, I show an error toast and return early. Otherwise, I rewrite the HTML to replace asset paths with their corresponding blob URLs, then update the state with the file list, blob URL map, active file path, and processed HTML content before switching to the files tab. The rewriteHtmlAssets function parses the HTML document and determines the directory path of the HTML file to help resolve relative asset references.
+
+Now I'm setting up helper functions to resolve relative paths by cleaning up dot-slash prefixes and parent directory references, then rewriting element attributes to swap local file paths with their blob URL equivalents...
+
+Rewriting asset references... Finishing the URL rewriting logic, then I need to handle switching between device files by saving the current DOM state and managing blob URL cleanup with refs to track both the URLs and the blob URL map for proper resource management. The blob URLs persist in the saved DOM since they're still valid when reloaded, so that works fine. React's batched state updates mean the deviceFiles I read might be stale, but that's okay because I'm using the file content from the current state to process through rewriteHtmlAssets. Now I need to write out the complete fixed code with the main changes being removing onHtmlChange from ElementInspector in home.tsx...
+
+Adding helper functions and refs...
+
+Updating file switching logic...
+
+Now I'm realizing the CSS file issue—when we create blob URLs for stylesheets, relative paths inside the CSS won't resolve correctly since blob URLs don't have a real directory structure. Instead, I should inline CSS content directly into <style> tags and rewrite any url() references to point to blob URLs, so the paths resolve properly.
+
+For binary assets like images and fonts, I'll create blob URLs. Scripts can stay as blob URLs since they're typically bundled and don't have relative import issues. Let me implement this complete solution now.
+
+One thing to keep in mind: the webkitRelativePath property gives the full relative path including the folder name, like mysite/index.html, though Safari might behave differently. I'll strip the first component anyway. Also, when using webkitdirectory, the browser includes all files in the directory and subdirectories, so I should filter to only common web file types—HTML, CSS, JavaScript, JSON, images, fonts, and video formats. SVG is tricky since it's XML-based text but functions as an asset when referenced in src attributes.
+
+I'm going to keep the file type handling straightforward: HTML files get processed as HTML, CSS as CSS with inline rewrites, JavaScript files get blob URLs, and everything else becomes a blob URL as a binary asset. I'll organize this by creating a separate asset rewriter module to keep the main component clean, then update the home page with the necessary fixes.
+
+Writing the asset rewriter module... Adding more MIME types... Writing CSS and HTML rewriting functions... Rewriting CSS URLs and inlining stylesheets, then updating script and media element sources to use blob URLs... Finishing the CSS rewriting logic, then moving to home.tsx where I need to import the asset rewriter helpers, set up refs to track blob URLs for cleanup and file switching, refactor the device import function, remove the HTML change handler, and fix file selection in the tree. I'm also adding a cleanup effect that revokes all blob URLs when the component unmounts. The blob URLs won't get rewritten again since they don't match local paths, which is the right behavior. When saving the DOM back, the HTML structure might differ from the original due to script modifications, but that's expected for a live editor. For multi-page imports, clicking between pages should save the current edits and load the new page, though relative links between pages will still point to their original paths rather than blob URLs.
+
+When a user clicks a link like <a href="about.html"> in the preview, it tries to navigate to that path on the same origin, which doesn't exist. I could rewrite these links to blob URLs, but that would cause the iframe to navigate away from our controlled srcDoc, breaking the inspector. The better approach is to intercept click events in the iframe and handle navigation ourselves, similar to how ElementInspector works.
+
+For now, I'll skip rewriting <a> links to keep things simpler—multi-page navigation won't work, but single-page sites will render correctly. I also need to handle saving edits when switching files: capture the current DOM from the iframe, update that file's content in deviceFiles, then load the new file. The tricky part is that the captured DOM might contain blob URLs for assets, so I need to be careful about what gets saved back.
+
+I'm thinking through two approaches: either don't save edits when switching (simpler but loses user changes), or save the DOM and track which files have already been processed with blob URLs so I don't rewrite them again. Option B is better for UX—I'll use a Map to track processed status and only run asset rewriting on files being loaded for the first time.
+
+Now I'm ready to implement this. I'll create the helper functions for asset rewriting and update the main component with the fixes.

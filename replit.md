@@ -1,4 +1,4 @@
-# Visage
+# Breacher
 
 A web design editor where users import projects from Framer or local HTML files, inspect and edit elements visually, and push to GitHub — all with a point-based economy backed by Firebase.
 

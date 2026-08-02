@@ -18,7 +18,7 @@ const TEMPLATES: Template[] = [
   {
     id: "dark-landing",
     name: "Dark Landing",
-    author: "visage",
+    author: "breacher",
     category: "Landing Pages",
     bgColor: "#0a0a0a",
     previewHtml: `<div style="background:#0a0a0a;color:#fff;font-family:sans-serif;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:28px;font-weight:700;margin:0 0 8px">Dark Landing</h1><p style="color:#888;font-size:12px;margin:0">Minimal dark theme</p></div>`,
@@ -26,7 +26,7 @@ const TEMPLATES: Template[] = [
   {
     id: "clean-saas",
     name: "Clean SaaS",
-    author: "visage",
+    author: "breacher",
     category: "Landing Pages",
     bgColor: "#f8fafc",
     previewHtml: `<div style="background:#f8fafc;font-family:sans-serif;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:24px;font-weight:700;margin:0 0 8px;color:#0f172a">Clean SaaS</h1><p style="color:#64748b;font-size:12px;margin:0">Light professional layout</p></div>`,
@@ -34,7 +34,7 @@ const TEMPLATES: Template[] = [
   {
     id: "portfolio",
     name: "Portfolio",
-    author: "visage",
+    author: "breacher",
     category: "Portfolio",
     bgColor: "#fafaf9",
     previewHtml: `<div style="background:#fafaf9;font-family:sans-serif;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:24px;font-weight:700;margin:0 0 8px;color:#1c1917">Portfolio</h1><p style="color:#78716c;font-size:12px;margin:0">Creative showcase</p></div>`,
@@ -42,7 +42,7 @@ const TEMPLATES: Template[] = [
   {
     id: "blog",
     name: "Blog",
-    author: "visage",
+    author: "breacher",
     category: "Content",
     bgColor: "#fff",
     previewHtml: `<div style="background:#fff;font-family:Georgia,serif;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:24px;font-weight:700;margin:0 0 8px;color:#111">The Blog</h1><p style="color:#555;font-size:12px;margin:0">Typography-first writing</p></div>`,
@@ -50,7 +50,7 @@ const TEMPLATES: Template[] = [
   {
     id: "mobile-app",
     name: "Mobile App",
-    author: "visage",
+    author: "breacher",
     category: "Mobile",
     bgColor: "#6366f1",
     previewHtml: `<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-family:sans-serif;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:24px;font-weight:700;margin:0 0 8px">Mobile App</h1><p style="color:rgba(255,255,255,0.7);font-size:12px;margin:0">App landing + CTA</p></div>`,
@@ -58,7 +58,7 @@ const TEMPLATES: Template[] = [
   {
     id: "docs",
     name: "Documentation",
-    author: "visage",
+    author: "breacher",
     category: "Content",
     bgColor: "#f1f5f9",
     previewHtml: `<div style="background:#f1f5f9;font-family:monospace;padding:24px;height:100%;display:flex;flex-direction:column;justify-content:center"><h1 style="font-size:22px;font-weight:700;margin:0 0 8px;color:#1e293b">Docs</h1><p style="color:#64748b;font-size:11px;margin:0">Developer documentation</p></div>`,

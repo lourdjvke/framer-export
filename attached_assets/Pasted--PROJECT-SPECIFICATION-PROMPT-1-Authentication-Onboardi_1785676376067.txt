@@ -1,0 +1,89 @@
+# PROJECT SPECIFICATION & PROMPT
+
+## 1. Authentication & Onboarding Overlay
+- **Default State:**
+  - Full-screen blurred/frosty overlay blocks access until user login state is verified.
+- **Center Modal UI:**
+  - Three large square action tiles:
+    - Background: Semi-transparent
+    - Border: Thin black border
+    - Corner Radius: Subtle smooth edges
+    - Padding: Proper spacing with a dominant icon and clear label
+- **Options & Flow:**
+  - **Option 1: Import from Framer**
+    - Clicking slides in an input field for the Framer link.
+    - Pressing `Enter` smoothly expands a "Login to continue" button (supporting Google, GitHub, or Email/Password).
+  - **Option 2: Import from Device**
+    - Allows uploading a local HTML website folder/files.
+    - Follows the exact same login trigger scope as Option 1.
+  - **Post-Login Modal:**
+    - Before granting entry into the app, prompt the user for their **GitHub Username** and **Personal Access Token (PAT)**.
+    - These credentials will be used to create and manage repositories on their behalf.
+
+---
+
+## 2. Dynamic Preview & Layout Stripping
+- **Preview Canvas Mode:**
+  - Clicking the "Preview" tab hides all sidebars, chat panels, and secondary UI elements, leaving only the top navigation bar for clean, full-canvas viewing.
+  - Supports true client-side routing and path navigation (e.g., `/about`, `/contact`).
+
+---
+
+## 3. Tool bar Controls & Element Inspector
+- **Floating Bottom Toolbar:**
+  - **Default Tool:** Palm / Pan tool (Cursor/Select mode is disabled by default).
+  - **Cursor Tool Activation:** Can only be toggled when a valid preview exists.
+- **Interactive Editing Mode (Cursor Active):**
+  - Hovering over page elements renders active outlines/focus rings.
+  - **Element Click Behavior:** Opens a dynamic, space-conscious inspector panel (automatically shifts position near screen boundaries to prevent clipping or obscuring elements).
+  - **Text Elements:** Edit raw text string, font size, font weight, color, and typography settings.
+  - **Link Elements (`<a>`):** Edit label text, `href` destination, text color, background color, and raw CSS attributes.
+  - **Multi-Tab Inspector View:** Switch seamlessly between visual style controls, raw CSS properties, and raw HTML markup.
+
+---
+
+## 4. Project Naming & GitHub Sync
+- Prompt the user to name new projects during import.
+- Auto-generate a linked GitHub repository using their saved PAT/username.
+- Maintain a local/account-bound version linked to Firebase that can push code changes, media assets, and updates directly to GitHub.
+
+---
+
+## 5. Community Templates
+- **Templates Gallery:**
+  - Browse community-shared projects and Framer imports.
+  - Renders live `index.html` previews for each template card.
+
+---
+
+## 6. Database, Persistence & Economy System
+- **Tech Constraints:** 
+  - Use **Firebase Authentication** + **Firebase Realtime Database (RTDB)** ONLY.
+  - Do NOT use Firestore or Firebase Storage.
+- **Point Ledger & Rules (Stored in RTDB):**
+  - **Account Creation:** +5 points automatically granted.
+  - **Import Framer Project:** Costs **4 points**.
+  - **Start Editing:** Requires a minimum balance of **2 points** (does not deduct points, acts as a gate).
+  - **Push to GitHub:** Costs **1 point**.
+  - **Unlock & Clone Template:** Costs **10 points**.
+
+---
+
+## 7. Firebase Configuration
+```javascript
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCeQYmMOlLedP43EFVUAXDGi38spf_7erU",
+  authDomain: "visage-a1d96.firebaseapp.com",
+  databaseURL: "[https://visage-a1d96-default-rtdb.firebaseio.com](https://visage-a1d96-default-rtdb.firebaseio.com)",
+  projectId: "visage-a1d96",
+  storageBucket: "visage-a1d96.firebasestorage.app",
+  messagingSenderId: "627891269494",
+  appId: "1:627891269494:web:92796a7b38f13e42211457",
+  measurementId: "G-W7TLBNM0CV"
+};
+
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);

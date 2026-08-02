@@ -1,809 +1,690 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { ConversionJob } from "@workspace/api-client-react";
-import { useListConversions, useStartConversion } from "@workspace/api-client-react";
-import { ConversionProgress } from "@/components/conversion-progress";
-import { ConversionResults } from "@/components/conversion-results";
-import { useToast } from "@/hooks/use-toast";
-import { formatBytes, formatRelativeTime } from "@/lib/utils";
 import {
-  ArrowRight, CheckCircle2, XCircle, Loader2, Code2, Sparkles,
-  ChevronDown, Globe, Link, Mic, Plus, Image, Layers,
-  LayoutTemplate, Zap, BookOpen, Folder, FolderOpen, File,
-  FileCode, FileText, FileVideo, FileImage, FileType, ChevronRight,
-  Download, ExternalLink,
+  MousePointer2, Hand, Sparkles, MessageSquare, Pencil, Maximize2,
+  Github, LogOut, ChevronDown, Globe, Link, Plus, Zap,
+  LayoutTemplate, BookOpen, Layers, AlertTriangle,
 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { AuthOverlay } from "@/components/auth/AuthOverlay";
+import { GithubCredentialsModal } from "@/components/auth/GithubCredentialsModal";
+import { ProjectNameModal } from "@/components/editor/ProjectNameModal";
+import { ElementInspector } from "@/components/editor/ElementInspector";
+import { TemplateGallery } from "@/components/editor/TemplateGallery";
+import type { Template } from "@/components/editor/TemplateGallery";
+import { GithubSync } from "@/components/editor/GithubSync";
+import { watchPoints, adjustPoints, canAfford, POINTS } from "@/lib/points";
+import { useToast } from "@/hooks/use-toast";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-type ViewState =
-  | { type: "idle" }
-  | { type: "converting"; jobId: string }
-  | { type: "complete"; job: ConversionJob };
+type AppStage =
+  | "auth"          // Not logged in
+  | "github-creds"  // Post-login: collect GitHub creds
+  | "project-name"  // Name the project
+  | "editor";       // Main editor
 
+type Tool = "pan" | "cursor" | "chat" | "draw" | "edit" | "generate";
 type RightTab = "templates" | "inspiration" | "files";
+type ViewMode = "design" | "preview";
 
-interface TreeNode {
-  name: string;
-  type: "file" | "dir";
-  children: TreeNode[];
-  filePath?: string;
-  category?: string;
-  size?: number;
+interface HistoryEntry {
+  id: string;
+  summary: string;
+  time: number;
 }
 
-// ─── File tree builder ────────────────────────────────────────────────────────
+// ─── Chat Panel ───────────────────────────────────────────────────────────────
 
-function buildTree(files: ConversionJob["files"]): TreeNode {
-  const root: TreeNode = { name: "", type: "dir", children: [] };
-  for (const f of files) {
-    const parts = f.path.split("/");
-    let node = root;
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-      let child = node.children.find((c) => c.name === part);
-      if (!child) {
-        child = isLast
-          ? { name: part, type: "file", children: [], filePath: f.path, category: f.category, size: f.size }
-          : { name: part, type: "dir", children: [] };
-        node.children.push(child);
-      }
-      node = child;
-    }
-  }
-  return root;
-}
-
-function categoryIcon(cat?: string) {
-  switch (cat) {
-    case "html": return <FileText className="w-3 h-3 text-blue-500" />;
-    case "css": return <FileCode className="w-3 h-3 text-purple-500" />;
-    case "js": return <FileCode className="w-3 h-3 text-yellow-500" />;
-    case "image": return <FileImage className="w-3 h-3 text-green-500" />;
-    case "video": return <FileVideo className="w-3 h-3 text-red-500" />;
-    case "font": return <FileType className="w-3 h-3 text-pink-500" />;
-    default: return <File className="w-3 h-3 text-gray-400" />;
-  }
-}
-
-function TreeNodeRow({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
-  const [open, setOpen] = useState(depth < 1);
-  if (node.type === "dir") {
-    return (
-      <div>
-        <button
-          className="flex items-center gap-1.5 w-full px-2 py-0.5 rounded hover:bg-gray-100 text-xs text-gray-700 font-medium"
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <ChevronRight className={`w-3 h-3 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
-          {open ? <FolderOpen className="w-3 h-3 text-amber-400" /> : <Folder className="w-3 h-3 text-amber-400" />}
-          <span className="truncate">{node.name || "/"}</span>
-          <span className="ml-auto text-gray-400 font-normal">{node.children.length}</span>
-        </button>
-        {open && node.children.map((c, i) => (
-          <TreeNodeRow key={i} node={c} depth={depth + 1} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div
-      className="flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-gray-100 text-xs text-gray-600"
-      style={{ paddingLeft: `${8 + depth * 14}px` }}
-    >
-      {categoryIcon(node.category)}
-      <span className="truncate flex-1">{node.name}</span>
-      {node.size != null && <span className="text-gray-400 shrink-0">{formatBytes(node.size)}</span>}
-    </div>
-  );
-}
-
-// ─── Files tab with search ────────────────────────────────────────────────────
-
-function flattenTree(node: TreeNode, q: string): TreeNode {
-  if (node.type === "file") {
-    return (node.name.toLowerCase().includes(q) || (node.category ?? "").toLowerCase().includes(q)) ? node : { ...node, name: "" };
-  }
-  const filteredChildren = node.children
-    .map((c) => flattenTree(c, q))
-    .filter((c) => c.name !== "" || (c.type === "dir" && c.children.length > 0));
-  return { ...node, children: filteredChildren };
-}
-
-function FilesTab({ currentJob, fileTree }: { currentJob: ConversionJob | null; fileTree: TreeNode | null }) {
-  const [q, setQ] = useState("");
-  const trimmed = q.trim().toLowerCase();
-  const displayTree = fileTree && trimmed ? flattenTree(fileTree, trimmed) : fileTree;
-
-  if (!currentJob) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Folder className="w-10 h-10 text-gray-200 mb-3" />
-        <p className="text-sm font-medium text-gray-500">No files yet</p>
-        <p className="text-xs text-gray-400 mt-1">Complete an extraction to browse the file tree</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <p className="text-xs font-semibold text-gray-700">
-            {(() => { try { return new URL(currentJob.url).hostname; } catch { return currentJob.url; } })()}
-          </p>
-          <p className="text-[10px] text-gray-400">{currentJob.totalFiles} files · {formatBytes(currentJob.totalSizeBytes)}</p>
-        </div>
-        {currentJob.downloadPath && (
-          <a href={currentJob.downloadPath} download className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-            <Download className="w-3 h-3" />ZIP
-          </a>
-        )}
-      </div>
-      {/* Search */}
-      <div className="relative mb-3">
-        <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-        </div>
-        <input
-          type="text"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search files…"
-          className="block w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs bg-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        {q && (
-          <button onClick={() => setQ("")} className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-gray-400 hover:text-gray-600">
-            <XCircle className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-      {/* Tree */}
-      <div className="border border-gray-100 rounded-lg bg-gray-50/50 py-1 overflow-hidden">
-        {displayTree && displayTree.children.length > 0
-          ? displayTree.children.map((node, i) => <TreeNodeRow key={i} node={node} depth={0} />)
-          : <p className="text-xs text-gray-400 text-center py-4">No files match "{q}"</p>
-        }
-      </div>
-    </div>
-  );
-}
-
-// ─── Card flip variants ───────────────────────────────────────────────────────
-
-const flipVariants = {
-  enter: (dir: number) => ({
-    rotateY: dir > 0 ? 90 : -90,
-    opacity: 0,
-    scale: 0.95,
-  }),
-  visible: {
-    rotateY: 0,
-    opacity: 1,
-    scale: 1,
-    transition: { duration: 0.38, ease: "easeOut" as const },
-  },
-  exit: (dir: number) => ({
-    rotateY: dir > 0 ? -90 : 90,
-    opacity: 0,
-    scale: 0.95,
-    transition: { duration: 0.28, ease: "easeIn" as const },
-  }),
-};
-
-// ─── History card ─────────────────────────────────────────────────────────────
-
-function HistoryCard({ job, onClick }: { job: ConversionJob; onClick: () => void }) {
-  const hostname = (() => { try { return new URL(job.url).hostname; } catch { return job.url; } })();
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left bg-white rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-gray-200 p-5"
-    >
-      <div className="bg-blue-50/60 rounded-lg p-3 text-sm text-gray-800 mb-3 border border-blue-100/60">
-        <p className="font-medium text-blue-900 mb-0.5 truncate">{hostname}</p>
-        <p className="text-gray-400 text-xs">{formatRelativeTime(job.createdAt)}</p>
-      </div>
-      <div className="flex items-center space-x-2 text-xs text-gray-500 mb-3">
-        {job.status === "done"
-          ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
-          : job.status === "error"
-            ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-            : <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
-        <span>
-          {job.status === "done"
-            ? `${job.totalFiles} files · ${formatBytes(job.totalSizeBytes)}`
-            : job.message}
-        </span>
-      </div>
-      <p className="text-sm text-gray-700 leading-relaxed truncate">
-        {job.status === "done"
-          ? `Click to view results`
-          : job.status === "error"
-            ? job.errorMessage ?? "Conversion failed"
-            : `In progress… ${job.progress}%`}
-      </p>
-    </button>
-  );
-}
-
-// ─── Inline URL form ──────────────────────────────────────────────────────────
-
-function InlineUrlForm({ onJobCreated }: { onJobCreated: (id: string) => void }) {
-  const [url, setUrl] = useState("");
-  const { toast } = useToast();
-  const startConversion = useStartConversion();
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
-    try { new URL(url.startsWith("http") ? url : `https://${url}`); } catch {
-      toast({ title: "Invalid URL", variant: "destructive" }); return;
-    }
-    startConversion.mutate(
-      { data: { url: url.startsWith("http") ? url : `https://${url}` } },
-      {
-        onSuccess: (job) => { setUrl(""); onJobCreated(job.id); },
-        onError: (err: any) => toast({ title: "Failed", description: err?.error ?? "Could not start", variant: "destructive" }),
-      }
-    );
-  };
-
-  return (
-    <form onSubmit={submit} className="flex flex-col">
-      <textarea
-        className="w-full bg-transparent border-none focus:ring-0 resize-none p-3 text-sm text-gray-800 placeholder-gray-400 outline-none"
-        rows={1}
-        placeholder="Paste a Framer site URL to extract…"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(e as any); } }}
-        style={{ minHeight: 44, maxHeight: 120 }}
-      />
-      <div className="px-2 pb-2 pt-1 flex justify-between items-center">
-        <div className="flex space-x-1">
-          <button type="button" className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <Plus className="w-4 h-4" />
-          </button>
-          <button type="button" className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <Image className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex items-center space-x-1">
-          <button type="button" className="flex items-center space-x-1 px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-600 text-xs rounded border border-gray-200 transition-colors">
-            <Layers className="w-3 h-3" />
-            <span>Standard</span>
-            <ChevronDown className="w-3 h-3" />
-          </button>
-          <button type="button" className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <Mic className="w-4 h-4" />
-          </button>
-          <button
-            type="submit"
-            disabled={startConversion.isPending || !url.trim()}
-            className="p-1.5 bg-gray-800 disabled:bg-gray-200 text-white disabled:text-gray-400 hover:bg-gray-900 rounded-lg transition-colors ml-1"
-          >
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-// ─── Canvas Content ───────────────────────────────────────────────────────────
-
-function CanvasContent({
-  viewState,
-  onJobCreated,
-  onComplete,
-  onError,
-  onNewConversion,
+function ChatPanel({
+  onClose,
+  projectName,
 }: {
-  viewState: ViewState;
-  onJobCreated: (id: string) => void;
-  onComplete: (job: ConversionJob) => void;
-  onError: (e: string) => void;
-  onNewConversion: () => void;
+  onClose: () => void;
+  projectName: string;
 }) {
+  const [message, setMessage] = useState("");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!message.trim()) return;
+    setHistory((h) => [
+      ...h,
+      { id: crypto.randomUUID(), summary: message, time: Date.now() },
+    ]);
+    setMessage("");
+  }
+
   return (
-    <div className="w-full h-full bg-[#0f0f0f] text-white flex flex-col relative overflow-hidden font-sans">
-      {/* Fake nav bar */}
-      <div className="flex justify-between items-center px-10 py-5 border-b border-white/10 shrink-0">
-        <div className="flex items-center gap-2 font-bold tracking-widest text-xs">
-          <Code2 className="w-4 h-4 text-teal-400" />
-          FRAMEEXPORT
-        </div>
-        <div className="flex items-center gap-6 text-[11px] text-gray-500 font-medium">
-          <span className="hover:text-white cursor-pointer transition-colors">DOCS</span>
-          <span className="hover:text-white cursor-pointer transition-colors">API</span>
-          <span className="text-teal-400 bg-teal-900/30 px-2 py-0.5 rounded border border-teal-800/50">v1.0</span>
-        </div>
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      className="absolute bottom-20 left-4 w-80 z-40 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden flex flex-col"
+      style={{ maxHeight: "60vh" }}
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+        <span className="text-xs font-semibold text-gray-700">Chat — {projectName}</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
       </div>
 
-      {/* Main area */}
-      <div className="flex-1 flex items-center justify-center px-10 py-8 overflow-hidden">
-        {viewState.type === "idle" && (
-          <div className="w-full max-w-xl space-y-6">
-            <div className="space-y-3">
-              <div className="inline-block border border-teal-800/50 bg-teal-900/20 text-teal-400 text-[10px] font-bold tracking-widest px-3 py-1 rounded-full">
-                • FRAMER → STATIC HTML
-              </div>
-              <h1 className="text-4xl font-bold leading-tight">
-                Your site.<br />
-                <span className="text-teal-400">Extracted.</span><br />
-                <span className="text-gray-500">Self-hosted.</span>
-              </h1>
-              <p className="text-gray-400 text-sm leading-relaxed max-w-sm">
-                Paste any Framer-published URL. We'll pull down every asset — HTML, CSS, JS, fonts, images, video — into a clean ZIP, ready to deploy anywhere.
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {history.length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-4">
+            No messages yet. Describe what you'd like to change.
+          </p>
+        ) : (
+          history.map((h) => (
+            <div key={h.id} className="bg-blue-50 rounded-xl p-2.5 border border-blue-100">
+              <p className="text-xs text-gray-800">{h.summary}</p>
+              <p className="text-[10px] text-gray-400 mt-1">
+                {new Date(h.time).toLocaleTimeString()}
               </p>
             </div>
-            <div className="relative">
-              <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-4 py-2 mb-3">
-                <Globe className="w-4 h-4 text-teal-400 shrink-0" />
-                <span className="text-gray-500 text-xs font-mono">Use the input below ↓ or paste here</span>
-              </div>
-              <p className="text-gray-600 text-xs">Or use the panel on the left to paste a URL and start extracting.</p>
-            </div>
-            {/* subtle glow */}
-            <div className="absolute -right-20 -bottom-20 w-72 h-72 bg-teal-500/8 blur-[100px] pointer-events-none rounded-full" />
-          </div>
-        )}
-
-        {viewState.type === "converting" && (
-          <div className="w-full max-w-xl space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-teal-400" />
-                <span className="text-sm font-medium text-white">Extracting site…</span>
-              </div>
-              <button
-                onClick={onNewConversion}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-            <ConversionProgress
-              jobId={viewState.jobId}
-              onComplete={onComplete}
-              onError={onError}
-            />
-          </div>
-        )}
-
-        {viewState.type === "complete" && (
-          <div className="w-full max-w-xl space-y-4 overflow-y-auto max-h-full py-2">
-            <div className="flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-teal-400" />
-                <span className="text-sm font-semibold text-white">Extraction Complete</span>
-              </div>
-              <button
-                onClick={onNewConversion}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
-              >
-                New extraction
-              </button>
-            </div>
-            {/* quick action buttons */}
-            <div className="flex gap-2 shrink-0">
-              {viewState.job.previewPath && (
-                <a
-                  href={viewState.job.previewPath + "/"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-xs text-white transition-colors"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Preview
-                </a>
-              )}
-              {viewState.job.downloadPath && (
-                <a
-                  href={viewState.job.downloadPath}
-                  download
-                  className="flex items-center gap-1.5 px-3 py-2 bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/30 rounded-lg text-xs text-teal-300 transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Download ZIP
-                </a>
-              )}
-            </div>
-            <div className="border-t border-white/10 pt-4">
-              <ConversionResults job={viewState.job} />
-            </div>
-          </div>
+          ))
         )}
       </div>
 
-      {/* bottom status bar */}
-      <div className="absolute bottom-5 left-10 flex items-center text-[10px] font-bold tracking-widest text-gray-600">
-        <span className="w-1.5 h-1.5 bg-teal-400 rounded-full mr-2 animate-pulse" />
-        READY
-      </div>
-    </div>
+      <form onSubmit={handleSend} className="p-3 border-t border-gray-100">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Describe what you want to design…"
+            className="flex-1 text-xs border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-900"
+          />
+          <button
+            type="submit"
+            disabled={!message.trim()}
+            className="bg-gray-900 text-white rounded-xl px-3 py-2 text-xs disabled:opacity-40 hover:bg-gray-700 transition-colors"
+          >
+            ↑
+          </button>
+        </div>
+      </form>
+    </motion.div>
   );
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+// ─── Main Editor ─────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [viewState, setViewState] = useState<ViewState>({ type: "idle" });
-  const [rightTab, setRightTab] = useState<RightTab>("templates");
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [historyOpen, setHistoryOpen] = useState(true);
-
-  // Card flip state
-  const [cardIndex, setCardIndex] = useState(0);
-  const [flipDir, setFlipDir] = useState(1);
-  const wheelAccum = useRef(0);
-  const flipping = useRef(false);
-
+  const { user, loading: authLoading, logout } = useAuth();
   const { toast } = useToast();
-  const { data: conversions } = useListConversions({ query: { refetchInterval: 3000, queryKey: ["conversions"] } });
 
-  const handleJobCreated = (jobId: string) => {
-    setViewState({ type: "converting", jobId });
-    setHistoryOpen(false);
-  };
+  // Stage
+  const [stage, setStage] = useState<AppStage>("auth");
 
-  const handleComplete = (job: ConversionJob) => {
-    setViewState({ type: "complete", job });
-    setRightTab("files");
-    toast({ title: "Extraction complete", description: `${job.totalFiles} files captured` });
-  };
+  // Project
+  const [projectName, setProjectName] = useState("Untitled Project");
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
-  const handleError = (error: string) => {
-    setViewState({ type: "idle" });
-    toast({ title: "Extraction failed", description: error, variant: "destructive" });
-  };
+  // Editor state
+  const [tool, setTool] = useState<Tool>("pan");
+  const [viewMode, setViewMode] = useState<ViewMode>("design");
+  const [rightTab, setRightTab] = useState<RightTab>("templates");
+  const [showRightPanel, setShowRightPanel] = useState(true);
+  const [showChat, setShowChat] = useState(false);
+  const [showGithubSync, setShowGithubSync] = useState(false);
+  const [points, setPoints] = useState<number | null>(null);
 
-  const handleSelectJob = (jobId: string) => {
-    setViewState({ type: "converting", jobId });
-    setHistoryOpen(false);
-  };
+  // Import state
+  const [importType, setImportType] = useState<"framer" | "device" | null>(null);
+  const [pendingFramerUrl, setPendingFramerUrl] = useState<string | undefined>();
+  const [pendingFiles, setPendingFiles] = useState<FileList | undefined>();
 
-  const handleNewConversion = () => {
-    setViewState({ type: "idle" });
-    setHistoryOpen(true);
-  };
+  // Iframe ref for element inspector
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Card flip on wheel
-  const history = conversions ?? [];
-  const onHistoryWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    if (history.length <= 1 || flipping.current) return;
-    wheelAccum.current += e.deltaY;
-    if (Math.abs(wheelAccum.current) < 50) return;
-    const dir = wheelAccum.current > 0 ? 1 : -1;
-    wheelAccum.current = 0;
-    setCardIndex((prev) => {
-      const next = prev + dir;
-      if (next < 0 || next >= history.length) return prev;
-      flipping.current = true;
-      setFlipDir(dir);
-      setTimeout(() => { flipping.current = false; }, 450);
-      return next;
-    });
-  }, [history.length]);
+  // Watch points
+  useEffect(() => {
+    if (!user) return;
+    const unsub = watchPoints(user.uid, setPoints);
+    return () => unsub();
+  }, [user]);
 
-  // Current job for Files tab
-  const currentJob = viewState.type === "complete" ? viewState.job : null;
-  const fileTree = currentJob ? buildTree(currentJob.files) : null;
+  // Auth state → stage
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setStage("auth");
+    }
+    // Don't auto-advance; auth overlay calls onAuthenticated which handles stage
+  }, [user, authLoading]);
+
+  // ── Auth flow ──────────────────────────────────────────────────────────────
+
+  function handleAuthenticated(
+    type: "framer" | "device" | null,
+    framerUrl?: string,
+    files?: FileList
+  ) {
+    setImportType(type);
+    setPendingFramerUrl(framerUrl);
+    setPendingFiles(files);
+    setStage("github-creds");
+  }
+
+  function handleGithubCredsComplete() {
+    setStage("project-name");
+  }
+
+  async function handleProjectName(name: string) {
+    setProjectName(name);
+
+    // Kick off import
+    if (importType === "framer" && pendingFramerUrl) {
+      await doFramerImport(pendingFramerUrl);
+    } else if (importType === "device" && pendingFiles) {
+      await doDeviceImport(pendingFiles);
+    }
+
+    setStage("editor");
+  }
+
+  // ── Import handlers ────────────────────────────────────────────────────────
+
+  async function doFramerImport(url: string) {
+    if (!user) return;
+    const affordable = await canAfford(user.uid, Math.abs(POINTS.IMPORT_FRAMER));
+    if (!affordable) {
+      toast({ title: "Not enough points", description: "Importing from Framer costs 4 points.", variant: "destructive" });
+      return;
+    }
+    await adjustPoints(user.uid, POINTS.IMPORT_FRAMER);
+    // Show placeholder — real Framer scraping is done by the api-server
+    setPreviewHtml(
+      `<html><body style="margin:0;background:#0a0a0a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px">
+        <div style="font-size:14px;opacity:.7">Loading Framer export…</div>
+        <div style="font-size:11px;opacity:.4;font-family:monospace">${url}</div>
+      </body></html>`
+    );
+    toast({ title: "Framer import started", description: "4 points used." });
+  }
+
+  async function doDeviceImport(files: FileList) {
+    const indexFile = Array.from(files).find((f) => f.name === "index.html");
+    if (!indexFile) {
+      // Use first .html file
+      const htmlFile = Array.from(files).find((f) => f.name.endsWith(".html"));
+      if (!htmlFile) {
+        toast({ title: "No HTML file found", description: "Please include an index.html.", variant: "destructive" });
+        return;
+      }
+      const text = await htmlFile.text();
+      setPreviewHtml(text);
+    } else {
+      const text = await indexFile.text();
+      setPreviewHtml(text);
+    }
+  }
+
+  // ── Tool handlers ──────────────────────────────────────────────────────────
+
+  function handleToolClick(t: Tool) {
+    if (t === "cursor" && !previewHtml) {
+      toast({ title: "No preview loaded", description: "Import a project first to use the cursor tool.", variant: "destructive" });
+      return;
+    }
+    if (t === "chat") {
+      setShowChat((v) => !v);
+      return;
+    }
+    setTool(t);
+  }
+
+  // ── Template select ────────────────────────────────────────────────────────
+
+  function handleTemplateSelect(template: Template) {
+    setPreviewHtml(
+      `<html><head><style>*{margin:0;padding:0;box-sizing:border-box}body{height:100vh}</style></head><body>${template.previewHtml}</body></html>`
+    );
+    setProjectName(template.name);
+  }
+
+  // ── Preview mode ───────────────────────────────────────────────────────────
+
+  const isPreview = viewMode === "preview";
+
+  // Check balance gate
+  const canEdit = points !== null && points >= POINTS.MIN_EDIT_BALANCE;
+
+  // ── Loading spinner while auth resolves ───────────────────────────────────
+
+  if (authLoading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-white">
+        <div className="w-6 h-6 border-2 border-gray-900 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // ── Stage: Auth ────────────────────────────────────────────────────────────
+
+  if (!user || stage === "auth") {
+    return <AuthOverlay onAuthenticated={handleAuthenticated} />;
+  }
+
+  if (stage === "github-creds") {
+    return <GithubCredentialsModal onComplete={handleGithubCredsComplete} />;
+  }
+
+  if (stage === "project-name") {
+    return <ProjectNameModal onConfirm={handleProjectName} />;
+  }
+
+  // ── Stage: Editor ─────────────────────────────────────────────────────────
 
   return (
     <div
-      className="h-screen w-screen flex flex-col overflow-hidden relative select-none"
+      className="h-screen w-screen flex flex-col relative overflow-hidden"
       style={{
         fontFamily: "'Inter', sans-serif",
-        backgroundColor: "#f7f7f7",
+        background: "#f7f7f7",
         backgroundImage: "radial-gradient(#d1d5db 1px, transparent 1px)",
         backgroundSize: "20px 20px",
       }}
     >
-      {/* ── Top Nav ── */}
-      <header className="absolute top-2 left-2 right-2 h-14 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-xl flex items-center justify-between px-3 z-50 shadow-sm">
-        <div className="flex items-center space-x-3">
-          <button className="p-1.5 hover:bg-gray-100 rounded-md text-gray-700">
-            <Code2 className="w-5 h-5" />
-          </button>
-          <div className="flex items-center space-x-1 cursor-pointer hover:bg-gray-50 px-2 py-1 rounded-md">
-            <span className="font-semibold text-sm text-gray-800">FrameExport</span>
-            <ChevronDown className="w-4 h-4 text-gray-500" />
-          </div>
-
-          <div className="h-6 w-px bg-gray-200 mx-2" />
-
-          <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
-            <button className="px-3 py-1 text-sm font-medium bg-white shadow-sm rounded-md text-gray-800">Extract</button>
-            <button className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-md transition-colors">Preview</button>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <button className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Docs</button>
-          <button className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200 rounded-lg transition-colors border border-gray-200/50 flex items-center space-x-1.5">
-            <Globe className="w-4 h-4 text-gray-500" />
-            <span>API</span>
-          </button>
-          <button className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
-            <Link className="w-5 h-5" />
-          </button>
-          <div className="h-6 w-px bg-gray-200 mx-1" />
-          <button
-            onClick={() => setRightPanelOpen((o) => !o)}
-            className={`p-1.5 border border-gray-200 rounded-lg shadow-sm hover:bg-gray-200 transition-colors ${rightPanelOpen ? "bg-gray-100 text-gray-700" : "bg-white text-gray-500"}`}
+      {/* ── Top Navigation ── */}
+      <AnimatePresence>
+        {!isPreview && (
+          <motion.header
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="absolute top-2 left-2 right-2 h-14 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-xl flex items-center justify-between px-3 z-50 shadow-sm"
           >
-            <Layers className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
+            {/* Left */}
+            <div className="flex items-center gap-2">
+              {/* Logo */}
+              <div className="p-1.5 hover:bg-gray-100 rounded-md text-gray-700">
+                <Layers className="w-5 h-5" />
+              </div>
 
-      {/* ── Canvas ── */}
-      <main className="flex-1 pt-16 relative overflow-hidden flex items-center justify-center">
-        {/* iframe-style wrapper */}
-        <div
-          className="rounded-lg overflow-hidden border border-gray-200 shadow-2xl ring-1 ring-black/5"
-          style={{
-            width: 1100,
-            height: 700,
-            transform: "scale(0.62)",
-            transformOrigin: "center center",
-            flexShrink: 0,
-          }}
-        >
-          <CanvasContent
-            viewState={viewState}
-            onJobCreated={handleJobCreated}
-            onComplete={handleComplete}
-            onError={handleError}
-            onNewConversion={handleNewConversion}
-          />
+              {/* Project name */}
+              <div className="flex items-center gap-1 cursor-pointer hover:bg-gray-50 px-2 py-1 rounded-md">
+                <span className="font-medium text-sm text-gray-800">{projectName}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+              </div>
+
+              <div className="h-5 w-px bg-gray-200 mx-1" />
+
+              {/* Design / Preview tabs */}
+              <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
+                <button
+                  onClick={() => setViewMode("design")}
+                  className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${viewMode === "design" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  Design
+                </button>
+                <button
+                  onClick={() => {
+                    if (!canEdit) {
+                      toast({ title: "Not enough points", description: `You need at least ${POINTS.MIN_EDIT_BALANCE} points to edit.`, variant: "destructive" });
+                      return;
+                    }
+                    setViewMode("preview");
+                  }}
+                  className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${(viewMode as string) === "preview" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+                >
+                  Preview
+                </button>
+              </div>
+
+              <div className="h-5 w-px bg-gray-200 mx-1" />
+
+              {/* Points meter */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1">
+                  <Zap className="w-3.5 h-3.5 text-yellow-500" />
+                  <span className="text-xs font-semibold text-gray-700">
+                    {points !== null ? points : "—"} pts
+                  </span>
+                </div>
+                {points !== null && points <= 3 && (
+                  <div className="flex items-center gap-1 text-xs text-amber-600">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Low balance</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setShowGithubSync((v) => !v)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200 rounded-lg transition-colors border border-gray-200/50 flex items-center gap-1.5"
+              >
+                <Github className="w-4 h-4" />
+                Push
+              </button>
+
+              <div className="h-5 w-px bg-gray-200 mx-0.5" />
+
+              {/* Avatar + logout */}
+              <div className="flex items-center gap-1.5">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="" className="w-7 h-7 rounded-full border border-gray-200" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-600">
+                    {(user.email || "U")[0].toUpperCase()}
+                  </div>
+                )}
+                <button
+                  onClick={logout}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+
+              <button
+                onClick={() => setShowRightPanel((v) => !v)}
+                className="p-1.5 bg-gray-100 text-gray-700 border border-gray-200 rounded-lg shadow-sm hover:bg-gray-200 transition-colors ml-1"
+              >
+                <LayoutTemplate className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.header>
+        )}
+      </AnimatePresence>
+
+      {/* ── Central Canvas ── */}
+      <main className="flex-1 flex overflow-hidden pt-16">
+        <div className="flex-1 relative z-10 flex items-center justify-center overflow-hidden">
+
+          {/* Canvas frame */}
+          <div
+            className="relative bg-white shadow-2xl ring-1 ring-black/5 overflow-hidden rounded-lg"
+            style={{
+              width: isPreview ? "100vw" : "calc(100vw - 380px)",
+              height: isPreview ? "100vh" : "calc(100vh - 120px)",
+              maxWidth: isPreview ? "100vw" : "1200px",
+              transition: "all 0.3s ease",
+            }}
+          >
+            {previewHtml ? (
+              <iframe
+                ref={iframeRef}
+                srcDoc={previewHtml}
+                className="w-full h-full border-0"
+                title="Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                style={{ cursor: tool === "cursor" ? "default" : tool === "pan" ? "grab" : "default" }}
+              />
+            ) : (
+              <div className="w-full h-full bg-[#0a0a0a] text-white flex flex-col relative overflow-hidden">
+                {/* Simulated hero (matches design reference) */}
+                <div className="flex justify-between items-center p-6 px-12 border-b border-gray-800/50">
+                  <div className="font-bold tracking-wider text-sm flex items-center">
+                    VISAGE<span className="w-2 h-2 bg-white ml-1 inline-block" />
+                  </div>
+                  <div className="flex gap-6 text-xs text-gray-400 font-medium">
+                    <span className="hover:text-white cursor-pointer transition-colors">DOCS</span>
+                    <span className="hover:text-white cursor-pointer transition-colors">STATUS</span>
+                    <span className="text-teal-400 bg-teal-900/30 px-2 py-0.5 rounded border border-teal-800/50">v1.0.0</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 flex px-12 py-16 items-center justify-between max-w-5xl mx-auto w-full">
+                  <div className="max-w-lg">
+                    <div className="inline-block border border-teal-800/50 bg-teal-900/20 text-teal-400 text-[10px] font-bold tracking-widest px-2 py-1 rounded-full mb-6">
+                      • IMPORT. EDIT. PUBLISH.
+                    </div>
+                    <h1 className="text-5xl font-bold leading-tight mb-4">
+                      Import your site.<br />
+                      <span className="text-teal-400">Edit it.</span><br />
+                      Push to <span className="text-gray-500">GitHub.</span>
+                    </h1>
+                    <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+                      Import from Framer or upload your own HTML. Inspect and edit elements visually. Push to GitHub in one click.
+                    </p>
+                    <div className="flex gap-3">
+                      <div className="px-5 py-2.5 text-xs text-gray-500 border border-gray-800 flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5" />
+                        Import a project above to get started
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Terminal mock */}
+                  <div className="w-[360px] bg-[#111] rounded-lg border border-gray-800 shadow-2xl overflow-hidden">
+                    <div className="flex items-center px-4 py-3 bg-[#1a1a1a] border-b border-gray-800">
+                      <div className="flex gap-1.5">
+                        <div className="w-3 h-3 rounded-full bg-gray-600" />
+                        <div className="w-3 h-3 rounded-full bg-gray-600" />
+                        <div className="w-3 h-3 rounded-full bg-gray-600" />
+                      </div>
+                      <div className="flex-1 text-center text-xs text-gray-500 font-mono">
+                        <span className="text-teal-500 mr-1">•</span> visage-editor
+                      </div>
+                    </div>
+                    <div className="p-5 font-mono text-sm leading-relaxed text-gray-300">
+                      <div className="text-gray-500 mb-2">$ visage import --framer</div>
+                      <div className="text-teal-400 mb-1">✓ Fetching Framer export…</div>
+                      <div className="text-teal-400 mb-1">✓ Stripping layout wrappers…</div>
+                      <div className="text-gray-300 mb-1">→ Opening in editor…</div>
+                      <div className="text-gray-600 mt-3 text-xs">Ready to inspect &amp; edit</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="absolute bottom-5 left-12 flex items-center text-[10px] font-bold tracking-widest text-gray-500">
+                  <span className="w-1.5 h-1.5 bg-teal-400 rounded-full mr-2" />
+                  VISAGE EDITOR READY
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </main>
 
+      {/* ── Element Inspector ── */}
+      <ElementInspector iframeRef={iframeRef} active={tool === "cursor" && !!previewHtml} />
+
       {/* ── Bottom Toolbar ── */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-gray-200 flex items-center p-1.5 space-x-1 z-40">
-        <button className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: "rotate(-45deg)" }}>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
-        <button className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />
-          </svg>
-        </button>
-        <div className="h-6 w-px bg-gray-200 mx-1" />
-        <button
-          onClick={() => setHistoryOpen((o) => !o)}
-          className="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium"
-        >
-          <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
-          <span>History</span>
-        </button>
-        <button className="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
-          <Zap className="w-4 h-4 text-gray-500" />
-          <span>Extract</span>
-        </button>
-        <button className="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
-          <Globe className="w-4 h-4 text-gray-500" />
-          <span>Preview</span>
-        </button>
-        <div className="h-6 w-px bg-gray-200 mx-1" />
-        <button className="px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors flex items-center space-x-2 text-sm font-medium">
-          <Plus className="w-4 h-4 text-gray-500" />
-          <span>New</span>
-        </button>
-      </div>
-
-      {/* ── Left Panel ── */}
-      <div className="absolute bottom-6 left-6 w-[380px] z-40 flex flex-col justify-end space-y-3">
-
-        {/* History stack — card flip on scroll */}
-        <AnimatePresence>
-          {historyOpen && history.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.2 }}
+      <AnimatePresence>
+        {!isPreview && (
+          <motion.div
+            initial={{ y: 60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 60, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="absolute bottom-5 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-lg border border-gray-200 flex items-center p-1.5 gap-0.5 z-40"
+          >
+            <ToolButton
+              active={tool === "pan"}
+              onClick={() => handleToolClick("pan")}
+              title="Pan (default)"
             >
-              {/* Scroll hint */}
-              <p className="text-[11px] text-gray-400 text-center mb-1.5 font-medium tracking-wide">
-                {cardIndex + 1} / {history.length} — scroll to browse
-              </p>
+              <Hand className="w-5 h-5" />
+            </ToolButton>
 
-              {/* Stacked card container */}
-              <div
-                className="relative"
-                style={{ perspective: "1000px" }}
-                onWheel={onHistoryWheel}
-              >
-                {/* Ghost cards behind (representing depth of history) */}
-                {history.length > 1 && (
-                  <div
-                    className="absolute inset-x-0 top-0 h-full bg-white border border-gray-200 rounded-xl z-0 shadow-sm"
-                    style={{ transform: "translateY(-8px) scale(0.96)" }}
-                  />
-                )}
-                {history.length > 2 && (
-                  <div
-                    className="absolute inset-x-0 top-0 h-full bg-white border border-gray-200 rounded-xl"
-                    style={{ transform: "translateY(-16px) scale(0.92)", zIndex: -1 }}
-                  />
-                )}
+            <ToolButton
+              active={tool === "cursor"}
+              onClick={() => handleToolClick("cursor")}
+              title={previewHtml ? "Cursor — inspect elements" : "Load a preview first"}
+              disabled={!previewHtml}
+            >
+              <MousePointer2 className="w-5 h-5" />
+            </ToolButton>
 
-                {/* Flip card */}
-                <div className="relative z-10" style={{ transformStyle: "preserve-3d" }}>
-                  <AnimatePresence custom={flipDir} mode="wait">
-                    <motion.div
-                      key={cardIndex}
-                      custom={flipDir}
-                      variants={flipVariants}
-                      initial="enter"
-                      animate="visible"
-                      exit="exit"
-                      style={{ transformStyle: "preserve-3d" }}
-                    >
-                      <HistoryCard
-                        job={history[cardIndex]}
-                        onClick={() => handleSelectJob(history[cardIndex].id)}
-                      />
-                    </motion.div>
-                  </AnimatePresence>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            <div className="h-6 w-px bg-gray-200 mx-0.5" />
 
-        {/* Input area */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden flex flex-col">
-          {/* Credits / status bar */}
-          <div className="bg-gray-50/50 border-b border-gray-100 px-4 py-2 flex items-center space-x-3">
-            <Zap className="w-4 h-4 text-teal-500" />
-            <div className="text-xs">
-              <span className="text-gray-600">
-                {viewState.type === "idle"
-                  ? "Ready to extract"
-                  : viewState.type === "converting"
-                    ? "Extraction in progress…"
-                    : "Extraction complete"}
-              </span>
-            </div>
-            {history.length > 0 && (
-              <button
-                onClick={() => setHistoryOpen((o) => !o)}
-                className="ml-auto text-xs text-blue-500 hover:underline"
-              >
-                {historyOpen ? "Hide" : `History (${history.length})`}
-              </button>
-            )}
-          </div>
+            <ToolButton
+              active={showChat}
+              onClick={() => handleToolClick("chat")}
+              title="Chat"
+            >
+              <MessageSquare className="w-5 h-5" />
+              <span className="text-xs ml-1.5 font-medium">Chat</span>
+            </ToolButton>
 
-          {/* URL input */}
-          <div className="p-3">
-            <div className="flex flex-col border border-gray-200 rounded-xl bg-white shadow-sm hover:border-gray-300 transition-colors focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400">
-              <InlineUrlForm onJobCreated={handleJobCreated} />
-            </div>
-          </div>
-        </div>
-      </div>
+            <ToolButton
+              active={tool === "draw"}
+              onClick={() => handleToolClick("draw")}
+              title="Draw"
+            >
+              <Pencil className="w-5 h-5" />
+              <span className="text-xs ml-1.5 font-medium">Draw</span>
+            </ToolButton>
 
-      {/* ── Right Sidebar ── */}
-      <motion.aside
-        animate={{ x: rightPanelOpen ? 0 : "110%", opacity: rightPanelOpen ? 1 : 0 }}
-        transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-        className="absolute top-[72px] right-2 bottom-6 w-[340px] bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col z-40 overflow-hidden"
-      >
-        {/* Tabs */}
-        <div className="flex p-2 border-b border-gray-100 shrink-0">
-          <button
-            onClick={() => setRightTab("templates")}
-            className={`flex-1 py-1.5 text-sm font-medium rounded-md flex items-center justify-center space-x-1.5 transition-colors ${rightTab === "templates" ? "bg-white shadow-sm border border-gray-200 text-gray-800" : "text-gray-500 hover:bg-gray-50"}`}
+            <ToolButton
+              active={tool === "edit"}
+              onClick={() => handleToolClick("edit")}
+              title="Edit"
+            >
+              <Maximize2 className="w-5 h-5" />
+              <span className="text-xs ml-1.5 font-medium">Edit</span>
+            </ToolButton>
+
+            <div className="h-6 w-px bg-gray-200 mx-0.5" />
+
+            <ToolButton
+              active={tool === "generate"}
+              onClick={() => handleToolClick("generate")}
+              title="Generate"
+            >
+              <Plus className="w-5 h-5" />
+              <span className="text-xs ml-1.5 font-medium">Generate</span>
+            </ToolButton>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Preview exit button ── */}
+      <AnimatePresence>
+        {isPreview && (
+          <motion.button
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            onClick={() => setViewMode("design")}
+            className="absolute top-4 right-4 z-50 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-xl px-3 py-2 text-xs font-medium text-gray-700 shadow-md hover:bg-white transition-colors flex items-center gap-1.5"
           >
-            <LayoutTemplate className="w-4 h-4" />
-            <span>Templates</span>
-          </button>
-          <button
-            onClick={() => setRightTab("inspiration")}
-            className={`flex-1 py-1.5 text-sm font-medium rounded-md flex items-center justify-center space-x-1.5 transition-colors ${rightTab === "inspiration" ? "bg-white shadow-sm border border-gray-200 text-gray-800" : "text-gray-500 hover:bg-gray-50"}`}
+            <Layers className="w-4 h-4" />
+            Exit Preview
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* ── Chat Panel ── */}
+      <AnimatePresence>
+        {showChat && !isPreview && (
+          <ChatPanel onClose={() => setShowChat(false)} projectName={projectName} />
+        )}
+      </AnimatePresence>
+
+      {/* ── Right Panel ── */}
+      <AnimatePresence>
+        {showRightPanel && !isPreview && (
+          <motion.aside
+            initial={{ x: 360, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 360, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="absolute top-16 right-2 bottom-5 w-[340px] bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col z-40 overflow-hidden"
           >
-            <Zap className="w-4 h-4" />
-            <span>Inspiration</span>
-          </button>
-          <button
-            onClick={() => setRightTab("files")}
-            className={`flex-1 py-1.5 text-sm font-medium rounded-md flex items-center justify-center space-x-1.5 transition-colors ${rightTab === "files" ? "bg-white shadow-sm border border-gray-200 text-gray-800" : "text-gray-500 hover:bg-gray-50"}`}
-          >
-            <Folder className="w-4 h-4" />
-            <span>Files</span>
-          </button>
-        </div>
-
-        {/* Tab content */}
-        <div className="flex-1 overflow-y-auto p-4" style={{ scrollbarWidth: "thin" }}>
-
-          {/* ── Templates tab ── */}
-          {rightTab === "templates" && (
-            <div>
-              <h3 className="text-xs font-medium text-gray-500 mb-3">Starting points for your extraction</h3>
-              <div className="relative mb-4">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                </div>
-                <input type="text" className="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm bg-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm" placeholder="Search examples" />
-              </div>
-              <div className="flex flex-wrap gap-2 mb-5">
-                {["All", "Agency", "Portfolio", "SaaS", "E-commerce", "Blog"].map((tag, i) => (
-                  <span key={tag} className={`px-3 py-1 text-xs font-medium rounded-full border cursor-pointer transition-colors ${i === 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200"}`}>{tag}</span>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { label: "Agency Hero", sub: "Agency", bg: "#0f0f0f", accent: "#2dd4bf" },
-                  { label: "SaaS Landing", sub: "SaaS", bg: "#1e1b4b", accent: "#818cf8" },
-                  { label: "Portfolio Grid", sub: "Portfolio", bg: "#f1481b", accent: "#fff" },
-                  { label: "E-commerce", sub: "E-commerce", bg: "#e9f0ea", accent: "#000" },
-                ].map((t) => (
-                  <div key={t.label} className="group cursor-pointer flex flex-col">
-                    <div
-                      className="rounded-lg overflow-hidden border border-gray-200 mb-2 group-hover:border-gray-300 transition-colors aspect-[3/4] flex flex-col items-center justify-center p-4"
-                      style={{ background: t.bg }}
-                    >
-                      <div className="w-8 h-1 rounded mb-2" style={{ background: t.accent, opacity: 0.8 }} />
-                      <div className="w-12 h-1 rounded mb-1" style={{ background: t.accent, opacity: 0.4 }} />
-                      <div className="w-10 h-1 rounded" style={{ background: t.accent, opacity: 0.3 }} />
-                    </div>
-                    <div className="text-xs font-medium text-gray-800 truncate">{t.label}</div>
-                    <div className="text-[10px] text-gray-500">{t.sub}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Inspiration tab ── */}
-          {rightTab === "inspiration" && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-medium text-gray-500 mb-3">Sites worth extracting</h3>
-              {[
-                { url: "https://framer.com", label: "Framer.com", note: "Official site" },
-                { url: "https://linear.app", label: "Linear.app", note: "SaaS landing" },
-                { url: "https://vercel.com", label: "Vercel.com", note: "Dev tool marketing" },
-                { url: "https://loom.com", label: "Loom.com", note: "Video messaging" },
-              ].map((site) => (
+            {/* Tabs */}
+            <div className="flex p-2 border-b border-gray-100 gap-1">
+              {(["templates", "inspiration", "files"] as RightTab[]).map((t) => (
                 <button
-                  key={site.url}
-                  onClick={() => handleJobCreated(site.url)}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors text-left group"
+                  key={t}
+                  onClick={() => setRightTab(t)}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors capitalize
+                    ${rightTab === t
+                      ? "bg-white shadow-sm border border-gray-200 text-gray-800"
+                      : "text-gray-500 hover:bg-gray-50"
+                    }`}
                 >
-                  <div className="w-8 h-8 rounded-md bg-gray-100 flex items-center justify-center shrink-0">
-                    <Globe className="w-4 h-4 text-gray-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{site.label}</p>
-                    <p className="text-xs text-gray-400">{site.note}</p>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                  {t === "templates" && <LayoutTemplate className="w-3.5 h-3.5 inline mr-1" />}
+                  {t === "inspiration" && <Sparkles className="w-3.5 h-3.5 inline mr-1" />}
+                  {t === "files" && <BookOpen className="w-3.5 h-3.5 inline mr-1" />}
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
-          )}
 
-          {/* ── Files tab ── */}
-          {rightTab === "files" && (
-            <FilesTab currentJob={currentJob} fileTree={fileTree} />
-          )}
-        </div>
-      </motion.aside>
+            <div className="flex-1 overflow-hidden p-3">
+              {rightTab === "templates" && (
+                <TemplateGallery onSelect={handleTemplateSelect} />
+              )}
+              {rightTab === "inspiration" && (
+                <div className="flex flex-col items-center justify-center h-full text-center text-sm text-gray-400 gap-2">
+                  <Sparkles className="w-8 h-8 text-gray-300" />
+                  <p>Inspiration gallery coming soon</p>
+                  <p className="text-xs">Community-shared Framer imports</p>
+                </div>
+              )}
+              {rightTab === "files" && (
+                <div className="flex flex-col h-full">
+                  <p className="text-xs font-medium text-gray-600 mb-2">Project files</p>
+                  {previewHtml ? (
+                    <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
+                      <div className="flex items-center gap-2 text-xs text-gray-700">
+                        <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
+                        index.html
+                        <span className="text-gray-400 ml-auto">
+                          {Math.round(previewHtml.length / 1024)} KB
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400">No files imported yet.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* ── GitHub Sync Panel ── */}
+      <AnimatePresence>
+        {showGithubSync && !isPreview && (
+          <GithubSync
+            projectName={projectName}
+            html={previewHtml || ""}
+            onClose={() => setShowGithubSync(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// ─── ToolButton ───────────────────────────────────────────────────────────────
+
+function ToolButton({
+  active,
+  onClick,
+  title,
+  disabled,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`flex items-center px-2.5 py-2 rounded-lg transition-colors text-sm disabled:opacity-40
+        ${active
+          ? "bg-blue-50 text-blue-600 hover:bg-blue-100"
+          : "text-gray-600 hover:bg-gray-100"
+        }`}
+    >
+      {children}
+    </button>
   );
 }

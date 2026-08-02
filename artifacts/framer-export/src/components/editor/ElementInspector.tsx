@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Code2, Paintbrush, FileCode2 } from "lucide-react";
 
@@ -16,6 +16,8 @@ interface InspectedElement {
 interface ElementInspectorProps {
   iframeRef: React.RefObject<HTMLIFrameElement | null>;
   active: boolean;
+  /** Called after any DOM mutation with the full serialized HTML of the iframe document. */
+  onHtmlChange?: (html: string) => void;
 }
 
 type InspectorTab = "style" | "css" | "html";
@@ -35,7 +37,7 @@ function getComputedStyleProps(el: HTMLElement): Record<string, string> {
   return props;
 }
 
-export function ElementInspector({ iframeRef, active }: ElementInspectorProps) {
+export function ElementInspector({ iframeRef, active, onHtmlChange }: ElementInspectorProps) {
   const [inspected, setInspected] = useState<InspectedElement | null>(null);
   const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
   const [tab, setTab] = useState<InspectorTab>("style");
@@ -45,6 +47,18 @@ export function ElementInspector({ iframeRef, active }: ElementInspectorProps) {
   const [editFontSize, setEditFontSize] = useState("");
   const [editFontWeight, setEditFontWeight] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
+
+  /** Serialize the iframe document and notify the parent. */
+  const notifyHtmlChange = useCallback(() => {
+    if (!onHtmlChange) return;
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    try {
+      onHtmlChange(doc.documentElement.outerHTML);
+    } catch {
+      // Cross-origin frames are blocked — silently ignore
+    }
+  }, [iframeRef, onHtmlChange]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -123,12 +137,14 @@ export function ElementInspector({ iframeRef, active }: ElementInspectorProps) {
   function applyStyle(prop: string, value: string) {
     if (!inspected) return;
     (inspected.el.style as unknown as Record<string, string>)[prop] = value;
+    notifyHtmlChange();
   }
 
   function applyText(val: string) {
     if (!inspected) return;
     inspected.el.innerText = val;
     setEditText(val);
+    notifyHtmlChange();
   }
 
   function applyHref(val: string) {
@@ -137,6 +153,7 @@ export function ElementInspector({ iframeRef, active }: ElementInspectorProps) {
       (inspected.el as HTMLAnchorElement).href = val;
     }
     setEditHref(val);
+    notifyHtmlChange();
   }
 
   // Position inspector panel intelligently near edge of screen
@@ -220,6 +237,11 @@ export function ElementInspector({ iframeRef, active }: ElementInspectorProps) {
                 <span className="text-xs font-mono text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
                   &lt;{inspected.tag}&gt;
                 </span>
+                {onHtmlChange && (
+                  <span className="text-[9px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-200">
+                    live sync
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 {(["style", "css", "html"] as InspectorTab[]).map((t) => (

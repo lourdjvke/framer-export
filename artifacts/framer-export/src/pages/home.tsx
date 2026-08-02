@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   MousePointer2, Hand, Sparkles, MessageSquare, Pencil, Maximize2,
   Github, LogOut, ChevronDown, Globe, Link, Plus, Zap,
-  LayoutTemplate, BookOpen, Layers, AlertTriangle,
+  LayoutTemplate, BookOpen, Layers, AlertTriangle, FileCode2,
+  Download, Loader2, FileText, Image, File,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AuthOverlay } from "@/components/auth/AuthOverlay";
@@ -33,6 +34,22 @@ interface HistoryEntry {
   summary: string;
   time: number;
 }
+
+/** A file from a Framer (api-server) conversion job. */
+interface FramerFile {
+  path: string;
+  size: number;
+  category: string;
+}
+
+/** A file from a local device import. */
+interface DeviceFile {
+  path: string;
+  content: string;
+  size: number;
+}
+
+type FramerJobStatus = "pending" | "crawling" | "downloading" | "processing" | "done" | "error";
 
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
 
@@ -108,6 +125,68 @@ function ChatPanel({
   );
 }
 
+// ─── Framer Loading Placeholder ───────────────────────────────────────────────
+
+function FramerLoadingView({ status, url }: { status: FramerJobStatus; url: string }) {
+  const labels: Record<FramerJobStatus, string> = {
+    pending: "Starting import…",
+    crawling: "Crawling pages…",
+    downloading: "Downloading assets…",
+    processing: "Processing files…",
+    done: "Done!",
+    error: "Import failed",
+  };
+
+  return (
+    <div className="w-full h-full bg-[#0a0a0a] text-white flex flex-col items-center justify-center gap-5 px-8">
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
+        <p className="text-sm font-medium text-white">{labels[status]}</p>
+        <p className="text-xs text-gray-500 font-mono truncate max-w-xs text-center">{url}</p>
+      </div>
+
+      <div className="w-full max-w-xs">
+        <div className="flex justify-between text-[10px] text-gray-500 mb-1.5">
+          {(["pending", "crawling", "downloading", "processing", "done"] as FramerJobStatus[]).map((s) => (
+            <span
+              key={s}
+              className={status === s ? "text-teal-400 font-medium" : ""}
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+        <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
+          <motion.div
+            className="h-full bg-teal-400 rounded-full"
+            initial={{ width: "5%" }}
+            animate={{
+              width:
+                status === "pending" ? "10%" :
+                status === "crawling" ? "35%" :
+                status === "downloading" ? "60%" :
+                status === "processing" ? "85%" :
+                status === "done" ? "100%" : "10%",
+            }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── File Icon ────────────────────────────────────────────────────────────────
+
+function FileIcon({ path }: { path: string }) {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "html") return <FileCode2 className="w-3.5 h-3.5 text-orange-500 shrink-0" />;
+  if (ext === "css") return <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />;
+  if (ext === "js") return <FileText className="w-3.5 h-3.5 text-yellow-500 shrink-0" />;
+  if (["png","jpg","jpeg","gif","svg","webp"].includes(ext)) return <Image className="w-3.5 h-3.5 text-green-500 shrink-0" />;
+  return <File className="w-3.5 h-3.5 text-gray-400 shrink-0" />;
+}
+
 // ─── Main Editor ─────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -119,7 +198,20 @@ export default function Home() {
 
   // Project
   const [projectName, setProjectName] = useState("Untitled Project");
+
+  // srcDoc preview — used for device/template imports
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+
+  // Framer job — used for Framer imports (iframe src)
+  const [framerJobId, setFramerJobId] = useState<string | null>(null);
+  const [framerJobStatus, setFramerJobStatus] = useState<FramerJobStatus>("pending");
+  const [framerJobUrl, setFramerJobUrl] = useState("");
+  const [framerFiles, setFramerFiles] = useState<FramerFile[]>([]);
+  const [framerActivePath, setFramerActivePath] = useState("index.html");
+
+  // Device project files (for multi-file imports & file tree)
+  const [deviceFiles, setDeviceFiles] = useState<DeviceFile[]>([]);
+  const [deviceActivePath, setDeviceActivePath] = useState("index.html");
 
   // Editor state
   const [tool, setTool] = useState<Tool>("pan");
@@ -130,13 +222,16 @@ export default function Home() {
   const [showGithubSync, setShowGithubSync] = useState(false);
   const [points, setPoints] = useState<number | null>(null);
 
-  // Import state
+  // Import state (pre-auth)
   const [importType, setImportType] = useState<"framer" | "device" | null>(null);
   const [pendingFramerUrl, setPendingFramerUrl] = useState<string | undefined>();
   const [pendingFiles, setPendingFiles] = useState<FileList | undefined>();
 
   // Iframe ref for element inspector
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Whether any preview is loaded
+  const hasPreview = !!(previewHtml || (framerJobId && framerJobStatus === "done"));
 
   // Watch points
   useEffect(() => {
@@ -151,7 +246,6 @@ export default function Home() {
     if (!user) {
       setStage("auth");
     }
-    // Don't auto-advance; auth overlay calls onAuthenticated which handles stage
   }, [user, authLoading]);
 
   // ── Auth flow ──────────────────────────────────────────────────────────────
@@ -173,58 +267,183 @@ export default function Home() {
 
   async function handleProjectName(name: string) {
     setProjectName(name);
+    setStage("editor"); // advance immediately
 
-    // Kick off import
     if (importType === "framer" && pendingFramerUrl) {
       await doFramerImport(pendingFramerUrl);
     } else if (importType === "device" && pendingFiles) {
       await doDeviceImport(pendingFiles);
     }
-
-    setStage("editor");
   }
 
   // ── Import handlers ────────────────────────────────────────────────────────
 
   async function doFramerImport(url: string) {
     if (!user) return;
+
     const affordable = await canAfford(user.uid, Math.abs(POINTS.IMPORT_FRAMER));
     if (!affordable) {
       toast({ title: "Not enough points", description: "Importing from Framer costs 4 points.", variant: "destructive" });
       return;
     }
     await adjustPoints(user.uid, POINTS.IMPORT_FRAMER);
-    // Show placeholder — real Framer scraping is done by the api-server
-    setPreviewHtml(
-      `<html><body style="margin:0;background:#0a0a0a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px">
-        <div style="font-size:14px;opacity:.7">Loading Framer export…</div>
-        <div style="font-size:11px;opacity:.4;font-family:monospace">${url}</div>
-      </body></html>`
-    );
-    toast({ title: "Framer import started", description: "4 points used." });
+
+    // Reset any prior device state
+    setPreviewHtml(null);
+    setDeviceFiles([]);
+    setFramerActivePath("index.html");
+    setFramerFiles([]);
+
+    // Kick off the conversion job on the api-server
+    let jobId: string;
+    try {
+      const res = await fetch("/api/conversions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error || `Server error ${res.status}`);
+      }
+      const job = await res.json() as { id: string };
+      jobId = job.id;
+    } catch (err) {
+      toast({
+        title: "Framer import failed",
+        description: err instanceof Error ? err.message : "Could not reach the conversion server. Make sure the API server is running.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setFramerJobId(jobId);
+    setFramerJobUrl(url);
+    setFramerJobStatus("pending");
+    toast({ title: "Framer import started", description: "4 points used. Fetching your site…" });
+
+    // Poll for job completion
+    const pollInterval = setInterval(async () => {
+      try {
+        const sr = await fetch(`/api/conversions/${jobId}`);
+        if (!sr.ok) return;
+        const status = await sr.json() as {
+          status: FramerJobStatus;
+          files?: FramerFile[];
+          errorMessage?: string;
+        };
+
+        setFramerJobStatus(status.status);
+
+        if (status.status === "done") {
+          clearInterval(pollInterval);
+          setFramerFiles(status.files ?? []);
+          setRightTab("files"); // auto-switch to files tab
+          toast({ title: "Import complete!", description: "Your Framer site is ready to edit." });
+        } else if (status.status === "error") {
+          clearInterval(pollInterval);
+          toast({
+            title: "Import failed",
+            description: status.errorMessage || "The scraper encountered an error.",
+            variant: "destructive",
+          });
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 2000);
+
+    // Safety: stop polling after 10 minutes
+    setTimeout(() => clearInterval(pollInterval), 600_000);
   }
 
   async function doDeviceImport(files: FileList) {
-    const indexFile = Array.from(files).find((f) => f.name === "index.html");
-    if (!indexFile) {
-      // Use first .html file
-      const htmlFile = Array.from(files).find((f) => f.name.endsWith(".html"));
-      if (!htmlFile) {
-        toast({ title: "No HTML file found", description: "Please include an index.html.", variant: "destructive" });
-        return;
+    const allFiles = Array.from(files);
+
+    // Build file records — strip the top-level folder prefix from webkitRelativePath
+    const deviceFileList: DeviceFile[] = [];
+    for (const file of allFiles) {
+      if (!file.name.endsWith(".html") && !file.name.endsWith(".css") && !file.name.endsWith(".js")) {
+        // Non-text file — add to tree with placeholder content
+        const rawPath = file.webkitRelativePath || file.name;
+        const path = rawPath.includes("/") ? rawPath.slice(rawPath.indexOf("/") + 1) : rawPath;
+        deviceFileList.push({ path: path || file.name, content: "", size: file.size });
+        continue;
       }
-      const text = await htmlFile.text();
-      setPreviewHtml(text);
-    } else {
-      const text = await indexFile.text();
-      setPreviewHtml(text);
+      const rawPath = file.webkitRelativePath || file.name;
+      const path = rawPath.includes("/") ? rawPath.slice(rawPath.indexOf("/") + 1) : rawPath;
+      const content = await file.text();
+      deviceFileList.push({ path: path || file.name, content, size: file.size });
     }
+
+    // Sort: index.html first, then by path
+    deviceFileList.sort((a, b) => {
+      if (a.path === "index.html") return -1;
+      if (b.path === "index.html") return 1;
+      return a.path.localeCompare(b.path);
+    });
+
+    setDeviceFiles(deviceFileList);
+    setFramerJobId(null);
+
+    // Find index.html or first html file
+    const indexFile =
+      deviceFileList.find((f) => f.path === "index.html") ||
+      deviceFileList.find((f) => f.path.endsWith(".html"));
+
+    if (!indexFile) {
+      toast({ title: "No HTML file found", description: "Please include an index.html.", variant: "destructive" });
+      return;
+    }
+
+    setDeviceActivePath(indexFile.path);
+    setPreviewHtml(indexFile.content);
+    setRightTab("files"); // auto-switch to files tab
+  }
+
+  // ── Current HTML getter (used by GithubSync at push-time) ─────────────────
+
+  const getCurrentHtml = useCallback((): string => {
+    // Always try to read the live DOM first — this captures any edits made in ElementInspector
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      if (doc && doc.documentElement) {
+        return doc.documentElement.outerHTML;
+      }
+    } catch {
+      // Cross-origin or not loaded yet — fall through
+    }
+    return previewHtml || "";
+  }, [previewHtml]);
+
+  // ── Handle HTML change from ElementInspector ───────────────────────────────
+
+  const handleHtmlChange = useCallback((html: string) => {
+    // Only update previewHtml for srcDoc iframes (device/template)
+    // For Framer src iframes, the DOM lives in the iframe — we serialize at push time
+    if (previewHtml !== null) {
+      setPreviewHtml(html);
+    }
+  }, [previewHtml]);
+
+  // ── Download current project as HTML ──────────────────────────────────────
+
+  function downloadCurrentHtml() {
+    const html = getCurrentHtml();
+    if (!html) return;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${projectName.toLowerCase().replace(/\s+/g, "-") || "project"}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // ── Tool handlers ──────────────────────────────────────────────────────────
 
   function handleToolClick(t: Tool) {
-    if (t === "cursor" && !previewHtml) {
+    if (t === "cursor" && !hasPreview) {
       toast({ title: "No preview loaded", description: "Import a project first to use the cursor tool.", variant: "destructive" });
       return;
     }
@@ -242,13 +461,13 @@ export default function Home() {
       `<html><head><style>*{margin:0;padding:0;box-sizing:border-box}body{height:100vh}</style></head><body>${template.previewHtml}</body></html>`
     );
     setProjectName(template.name);
+    setFramerJobId(null);
+    setDeviceFiles([]);
   }
 
   // ── Preview mode ───────────────────────────────────────────────────────────
 
   const isPreview = viewMode === "preview";
-
-  // Check balance gate
   const canEdit = points !== null && points >= POINTS.MIN_EDIT_BALANCE;
 
   // ── Loading spinner while auth resolves ───────────────────────────────────
@@ -276,6 +495,12 @@ export default function Home() {
   }
 
   // ── Stage: Editor ─────────────────────────────────────────────────────────
+
+  // Framer iframe src — changes when the user clicks a different HTML file in the tree
+  const framerIframeSrc =
+    framerJobId && framerJobStatus === "done"
+      ? `/api/preview/${framerJobId}/${framerActivePath === "index.html" ? "" : framerActivePath}`
+      : null;
 
   return (
     <div
@@ -323,7 +548,7 @@ export default function Home() {
                 <button
                   onClick={() => {
                     if (!canEdit) {
-                      toast({ title: "Not enough points", description: `You need at least ${POINTS.MIN_EDIT_BALANCE} points to edit.`, variant: "destructive" });
+                      toast({ title: "Not enough points", description: `You need at least ${POINTS.MIN_EDIT_BALANCE} points to enter Preview.`, variant: "destructive" });
                       return;
                     }
                     setViewMode("preview");
@@ -355,6 +580,18 @@ export default function Home() {
 
             {/* Right */}
             <div className="flex items-center gap-1.5">
+              {/* Download current HTML */}
+              {hasPreview && (
+                <button
+                  onClick={downloadCurrentHtml}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200 rounded-lg transition-colors border border-gray-200/50 flex items-center gap-1.5"
+                  title="Download current HTML (includes your edits)"
+                >
+                  <Download className="w-4 h-4" />
+                  Save
+                </button>
+              )}
+
               <button
                 onClick={() => setShowGithubSync((v) => !v)}
                 className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200 rounded-lg transition-colors border border-gray-200/50 flex items-center gap-1.5"
@@ -408,7 +645,35 @@ export default function Home() {
               transition: "all 0.3s ease",
             }}
           >
-            {previewHtml ? (
+            {/* Framer job — loading */}
+            {framerJobId && framerJobStatus !== "done" && framerJobStatus !== "error" && (
+              <FramerLoadingView status={framerJobStatus} url={framerJobUrl} />
+            )}
+
+            {/* Framer job — error */}
+            {framerJobId && framerJobStatus === "error" && (
+              <div className="w-full h-full bg-[#0a0a0a] text-white flex flex-col items-center justify-center gap-3">
+                <AlertTriangle className="w-8 h-8 text-red-400" />
+                <p className="text-sm font-medium">Import failed</p>
+                <p className="text-xs text-gray-500">Check that the Framer link is public and try again.</p>
+              </div>
+            )}
+
+            {/* Framer job — done (src iframe) */}
+            {framerIframeSrc && (
+              <iframe
+                ref={iframeRef}
+                key={framerIframeSrc} // remount on src change
+                src={framerIframeSrc}
+                className="w-full h-full border-0"
+                title="Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                style={{ cursor: tool === "cursor" ? "default" : tool === "pan" ? "grab" : "default" }}
+              />
+            )}
+
+            {/* Device / template import (srcDoc iframe) */}
+            {previewHtml && !framerIframeSrc && (
               <iframe
                 ref={iframeRef}
                 srcDoc={previewHtml}
@@ -417,9 +682,12 @@ export default function Home() {
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                 style={{ cursor: tool === "cursor" ? "default" : tool === "pan" ? "grab" : "default" }}
               />
-            ) : (
+            )}
+
+            {/* Empty state */}
+            {!hasPreview && !framerJobId && (
               <div className="w-full h-full bg-[#0a0a0a] text-white flex flex-col relative overflow-hidden">
-                {/* Simulated hero (matches design reference) */}
+                {/* Simulated hero */}
                 <div className="flex justify-between items-center p-6 px-12 border-b border-gray-800/50">
                   <div className="font-bold tracking-wider text-sm flex items-center">
                     VISAGE<span className="w-2 h-2 bg-white ml-1 inline-block" />
@@ -442,7 +710,7 @@ export default function Home() {
                       Push to <span className="text-gray-500">GitHub.</span>
                     </h1>
                     <p className="text-gray-400 text-sm mb-8 leading-relaxed">
-                      Import from Framer or upload your own HTML. Inspect and edit elements visually. Push to GitHub in one click.
+                      Import from Framer or upload your HTML folder. Inspect and edit elements visually. Push your edited version to GitHub.
                     </p>
                     <div className="flex gap-3">
                       <div className="px-5 py-2.5 text-xs text-gray-500 border border-gray-800 flex items-center gap-1.5">
@@ -485,7 +753,11 @@ export default function Home() {
       </main>
 
       {/* ── Element Inspector ── */}
-      <ElementInspector iframeRef={iframeRef} active={tool === "cursor" && !!previewHtml} />
+      <ElementInspector
+        iframeRef={iframeRef}
+        active={tool === "cursor" && hasPreview}
+        onHtmlChange={handleHtmlChange}
+      />
 
       {/* ── Bottom Toolbar ── */}
       <AnimatePresence>
@@ -508,8 +780,8 @@ export default function Home() {
             <ToolButton
               active={tool === "cursor"}
               onClick={() => handleToolClick("cursor")}
-              title={previewHtml ? "Cursor — inspect elements" : "Load a preview first"}
-              disabled={!previewHtml}
+              title={hasPreview ? "Cursor — inspect & edit elements" : "Load a preview first"}
+              disabled={!hasPreview}
             >
               <MousePointer2 className="w-5 h-5" />
             </ToolButton>
@@ -610,9 +882,11 @@ export default function Home() {
               ))}
             </div>
 
-            <div className="flex-1 overflow-hidden p-3">
+            <div className="flex-1 overflow-hidden">
               {rightTab === "templates" && (
-                <TemplateGallery onSelect={handleTemplateSelect} />
+                <div className="h-full overflow-auto p-3">
+                  <TemplateGallery onSelect={handleTemplateSelect} />
+                </div>
               )}
               {rightTab === "inspiration" && (
                 <div className="flex flex-col items-center justify-center h-full text-center text-sm text-gray-400 gap-2">
@@ -623,19 +897,33 @@ export default function Home() {
               )}
               {rightTab === "files" && (
                 <div className="flex flex-col h-full">
-                  <p className="text-xs font-medium text-gray-600 mb-2">Project files</p>
-                  {previewHtml ? (
-                    <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-700">
-                        <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
-                        index.html
-                        <span className="text-gray-400 ml-auto">
-                          {Math.round(previewHtml.length / 1024)} KB
-                        </span>
-                      </div>
-                    </div>
+                  {/* Framer file tree */}
+                  {framerJobId ? (
+                    <FramerFileTree
+                      jobId={framerJobId}
+                      jobStatus={framerJobStatus}
+                      files={framerFiles}
+                      activePath={framerActivePath}
+                      onSelect={setFramerActivePath}
+                      downloadUrl={`/api/conversions/${framerJobId}/download`}
+                    />
+                  ) : deviceFiles.length > 0 ? (
+                    /* Device file tree */
+                    <DeviceFileTree
+                      files={deviceFiles}
+                      activePath={deviceActivePath}
+                      onSelect={(path) => {
+                        setDeviceActivePath(path);
+                        const file = deviceFiles.find((f) => f.path === path);
+                        if (file && file.content) setPreviewHtml(file.content);
+                      }}
+                    />
                   ) : (
-                    <p className="text-xs text-gray-400">No files imported yet.</p>
+                    <div className="flex flex-col items-center justify-center h-full text-xs text-gray-400 gap-2 p-4 text-center">
+                      <BookOpen className="w-6 h-6 text-gray-300" />
+                      <p>No files imported yet.</p>
+                      <p className="text-gray-300">Import a project to see its files here.</p>
+                    </div>
                   )}
                 </div>
               )}
@@ -649,11 +937,200 @@ export default function Home() {
         {showGithubSync && !isPreview && (
           <GithubSync
             projectName={projectName}
-            html={previewHtml || ""}
+            getHtml={getCurrentHtml}
             onClose={() => setShowGithubSync(false)}
+            downloadUrl={
+              framerJobId && framerJobStatus === "done"
+                ? `/api/conversions/${framerJobId}/download`
+                : undefined
+            }
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Framer File Tree ─────────────────────────────────────────────────────────
+
+function FramerFileTree({
+  jobId,
+  jobStatus,
+  files,
+  activePath,
+  onSelect,
+  downloadUrl,
+}: {
+  jobId: string;
+  jobStatus: FramerJobStatus;
+  files: FramerFile[];
+  activePath: string;
+  onSelect: (path: string) => void;
+  downloadUrl: string;
+}) {
+  const htmlFiles = files.filter((f) => f.path.endsWith(".html"));
+  const otherFiles = files.filter((f) => !f.path.endsWith(".html"));
+
+  if (jobStatus !== "done") {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 p-4">
+        <Loader2 className="w-5 h-5 text-teal-500 animate-spin" />
+        <p className="text-xs text-gray-500 capitalize">{jobStatus}…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+        <p className="text-xs font-medium text-gray-600">
+          Framer import — {files.length} files
+        </p>
+        <a
+          href={downloadUrl}
+          download
+          className="flex items-center gap-1 text-[10px] text-blue-600 hover:underline"
+        >
+          <Download className="w-3 h-3" />
+          ZIP
+        </a>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+        {htmlFiles.length > 0 && (
+          <>
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide px-1 pt-2 pb-1">
+              Pages
+            </p>
+            {htmlFiles.map((f) => (
+              <FileRow
+                key={f.path}
+                path={f.path}
+                size={f.size}
+                active={activePath === f.path}
+                onClick={() => onSelect(f.path)}
+                clickable
+              />
+            ))}
+          </>
+        )}
+        {otherFiles.length > 0 && (
+          <>
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide px-1 pt-2 pb-1">
+              Assets ({otherFiles.length})
+            </p>
+            {otherFiles.slice(0, 40).map((f) => (
+              <FileRow key={f.path} path={f.path} size={f.size} />
+            ))}
+            {otherFiles.length > 40 && (
+              <p className="text-[10px] text-gray-400 px-2 py-1">
+                + {otherFiles.length - 40} more…
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Device File Tree ─────────────────────────────────────────────────────────
+
+function DeviceFileTree({
+  files,
+  activePath,
+  onSelect,
+}: {
+  files: DeviceFile[];
+  activePath: string;
+  onSelect: (path: string) => void;
+}) {
+  const htmlFiles = files.filter((f) => f.path.endsWith(".html"));
+  const otherFiles = files.filter((f) => !f.path.endsWith(".html"));
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="px-3 pt-3 pb-1">
+        <p className="text-xs font-medium text-gray-600">
+          Uploaded — {files.length} file{files.length !== 1 ? "s" : ""}
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
+        {htmlFiles.length > 0 && (
+          <>
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide px-1 pt-2 pb-1">
+              Pages
+            </p>
+            {htmlFiles.map((f) => (
+              <FileRow
+                key={f.path}
+                path={f.path}
+                size={f.size}
+                active={activePath === f.path}
+                onClick={() => onSelect(f.path)}
+                clickable
+              />
+            ))}
+          </>
+        )}
+        {otherFiles.length > 0 && (
+          <>
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide px-1 pt-2 pb-1">
+              Other files ({otherFiles.length})
+            </p>
+            {otherFiles.map((f) => (
+              <FileRow key={f.path} path={f.path} size={f.size} />
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── File Row ─────────────────────────────────────────────────────────────────
+
+function FileRow({
+  path,
+  size,
+  active = false,
+  onClick,
+  clickable = false,
+}: {
+  path: string;
+  size: number;
+  active?: boolean;
+  onClick?: () => void;
+  clickable?: boolean;
+}) {
+  const filename = path.split("/").pop() || path;
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+
+  return (
+    <div
+      onClick={clickable ? onClick : undefined}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors
+        ${clickable ? "cursor-pointer" : "cursor-default"}
+        ${active
+          ? "bg-blue-50 border border-blue-200 text-blue-800"
+          : clickable
+            ? "hover:bg-gray-50 text-gray-700"
+            : "text-gray-500"
+        }`}
+    >
+      <FileIcon path={path} />
+      <div className="flex-1 min-w-0">
+        <span className="block truncate font-medium">{filename}</span>
+        {dir && <span className="text-[10px] text-gray-400 truncate block">{dir}/</span>}
+      </div>
+      <span className="text-[10px] text-gray-400 shrink-0">
+        {size > 1024 * 1024
+          ? `${(size / 1024 / 1024).toFixed(1)}MB`
+          : size > 1024
+            ? `${Math.round(size / 1024)}KB`
+            : `${size}B`}
+      </span>
     </div>
   );
 }

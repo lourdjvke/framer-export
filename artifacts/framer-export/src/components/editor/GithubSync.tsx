@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Github, Loader2, Check, X, ExternalLink } from "lucide-react";
+import { Github, Loader2, Check, X, ExternalLink, Download } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { adjustPoints, canAfford, getGithubCredentials, POINTS } from "@/lib/points";
 import { useToast } from "@/hooks/use-toast";
 
 interface GithubSyncProps {
   projectName: string;
-  html: string;
+  /** Called at push-time to get the current HTML (includes any live edits). */
+  getHtml: () => string;
   onClose: () => void;
+  /** Optional ZIP download URL for Framer imports (from api-server). */
+  downloadUrl?: string;
 }
 
 type GithubApiError = { message?: string };
@@ -80,7 +83,7 @@ async function pushToGithub(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function GithubSync({ projectName, html, onClose }: GithubSyncProps) {
+export function GithubSync({ projectName, getHtml, onClose, downloadUrl }: GithubSyncProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [repoName, setRepoName] = useState(
@@ -105,6 +108,13 @@ export function GithubSync({ projectName, html, onClose }: GithubSyncProps) {
       const creds = await getGithubCredentials(user.uid);
       if (!creds) {
         toast({ title: "No GitHub credentials", description: "Set up your GitHub credentials first.", variant: "destructive" });
+        return;
+      }
+
+      // ── Get the latest HTML at push-time (includes any live edits) ─────────
+      const html = getHtml();
+      if (!html) {
+        toast({ title: "Nothing to push", description: "Import a project first.", variant: "destructive" });
         return;
       }
 
@@ -172,7 +182,7 @@ export function GithubSync({ projectName, html, onClose }: GithubSyncProps) {
               />
             </div>
             <p className="text-[10px] text-gray-400 mb-3">
-              Costs <strong>1 point</strong> per push. Creates or updates the repository.
+              Costs <strong>1 point</strong> per push. Pushes the <strong>current edited version</strong> of your project.
             </p>
             <button
               onClick={handlePush}
@@ -180,8 +190,20 @@ export function GithubSync({ projectName, html, onClose }: GithubSyncProps) {
               className="w-full bg-gray-900 text-white rounded-xl py-2.5 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
-              Push
+              Push edited version
             </button>
+
+            {/* Download ZIP link for Framer imports */}
+            {downloadUrl && (
+              <a
+                href={downloadUrl}
+                download
+                className="w-full mt-2 border border-gray-200 rounded-xl py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Download full project ZIP
+              </a>
+            )}
           </>
         )}
       </motion.div>

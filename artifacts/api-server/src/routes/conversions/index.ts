@@ -1,13 +1,14 @@
 import { Router } from "express";
 import axios from "axios";
 import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const archiver = require("archiver") as typeof import("archiver");
 import { waitUntil } from "@vercel/functions";
 import {
   createJob, getJob, listJobs, updateJob, consumeDownloadRequest,
 } from "../../lib/jobStore.js";
 import { startScrapeJob } from "../../lib/scraper.js";
+
+const require = createRequire(import.meta.url);
+const archiver = require("archiver") as typeof import("archiver");
 
 const router = Router();
 

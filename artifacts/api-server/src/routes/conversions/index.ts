@@ -1,29 +1,28 @@
 import { Router } from "express";
+import axios from "axios";
 import { ZipArchive } from "archiver";
 import { waitUntil } from "@vercel/functions";
 import {
   createJob, getJob, listJobs, updateJob, consumeDownloadRequest,
 } from "../../lib/jobStore.js";
 import { startScrapeJob } from "../../lib/scraper.js";
-import {
-  StartConversionBody, GetConversionParams, GetConversionStatsParams,
-} from "@workspace/api-zod";
 
 const router = Router();
 
-router.get("/conversions", async (_req, res): Promise<void> => {
+router.get("/conversions", async (_req: any, res: any): Promise<void> => {
   res.json(await listJobs());
 });
 
-router.post("/conversions", async (req, res): Promise<void> => {
-  const parsed = StartConversionBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+router.post("/conversions", async (req: any, res: any): Promise<void> => {
+  const rawUrl = req.body?.url;
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+    res.status(400).json({ error: "A site URL is required" });
     return;
   }
-  let url = parsed.data.url;
+
+  let url: string;
   try {
-    const parsedUrl = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const parsedUrl = new URL(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`);
     if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("Unsupported URL protocol");
     if (["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname) || parsedUrl.hostname.endsWith(".local")) {
       throw new Error("Local URLs cannot be imported");
@@ -49,31 +48,15 @@ router.post("/conversions", async (req, res): Promise<void> => {
   res.status(201).json(job);
 });
 
-router.get("/conversions/:id", async (req, res): Promise<void> => {
-  const params = GetConversionParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  const job = await getJob(params.data.id);
-  if (!job) {
-    res.status(404).json({ error: "Job not found or expired" });
-    return;
-  }
+router.get("/conversions/:id", async (req: any, res: any): Promise<void> => {
+  const job = await getJob(String(req.params.id || ""));
+  if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
   res.json(job);
 });
 
-router.get("/conversions/:id/stats", async (req, res): Promise<void> => {
-  const params = GetConversionStatsParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  const job = await getJob(params.data.id);
-  if (!job) {
-    res.status(404).json({ error: "Job not found or expired" });
-    return;
-  }
+router.get("/conversions/:id/stats", async (req: any, res: any): Promise<void> => {
+  const job = await getJob(String(req.params.id || ""));
+  if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
   const categories = new Map<string, { count: number; sizeBytes: number }>();
   for (const file of job.files) {
     const stats = categories.get(file.category) ?? { count: 0, sizeBytes: 0 };
@@ -87,16 +70,15 @@ router.get("/conversions/:id/stats", async (req, res): Promise<void> => {
   });
 });
 
-router.get("/conversions/:id/files/search", async (req, res): Promise<void> => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.get("/conversions/:id/files/search", async (req: any, res: any): Promise<void> => {
   const q = String(req.query.q ?? "").toLowerCase().trim();
-  const job = await getJob(id);
+  const job = await getJob(String(req.params.id || ""));
   if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
-  res.json(q ? job.files.filter((f) => f.path.toLowerCase().includes(q) || f.category.toLowerCase().includes(q)) : job.files);
+  res.json(q ? job.files.filter((file) => file.path.toLowerCase().includes(q) || file.category.toLowerCase().includes(q)) : job.files);
 });
 
-router.get("/conversions/:id/download", async (req, res): Promise<void> => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.get("/conversions/:id/download", async (req: any, res: any): Promise<void> => {
+  const id = String(req.params.id || "");
   const existing = await getJob(id);
   if (!existing) { res.status(404).json({ error: "Job not found or expired" }); return; }
   if (existing.status !== "done") { res.status(400).json({ error: "Conversion not complete yet" }); return; }
@@ -113,41 +95,40 @@ router.get("/conversions/:id/download", async (req, res): Promise<void> => {
   });
   archive.pipe(res);
   for (const file of job.files) {
-    const asset = await fetch(file.blobUrl);
-    if (!asset.ok) throw new Error(`Stored asset unavailable: ${file.path}`);
-    archive.append(Buffer.from(await asset.arrayBuffer()), { name: file.path });
+    const asset = await axios.get(file.blobUrl, { responseType: "arraybuffer", timeout: 30000 });
+    archive.append(Buffer.from(asset.data), { name: file.path });
   }
   archive.append("# Netlify SPA routing\n/* /index.html 200\n", { name: "_redirects" });
   archive.append(JSON.stringify({ rewrites: [{ source: "/((?!_next|assets).*)", destination: "/index.html" }] }, null, 2), { name: "vercel.json" });
   await archive.finalize();
 });
 
-router.get("/preview/:id/{*splat}", async (req, res): Promise<void> => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.get("/preview/:id/{*splat}", async (req: any, res: any): Promise<void> => {
+  const id = String(req.params.id || "");
   const splat = req.params.splat ?? "";
-  const requestedPath = (Array.isArray(splat) ? splat.join("/") : splat) || "index.html";
+  const requestedPath = (Array.isArray(splat) ? splat.join("/") : String(splat)) || "index.html";
   const job = await getJob(id);
   if (!job) { res.status(404).send("Job not found or expired"); return; }
-  const safePath = requestedPath.split("/").filter((part) => part && part !== "." && part !== "..").join("/");
+  const safePath = requestedPath.split("/").filter((part: string) => part && part !== "." && part !== "..").join("/");
   const file = job.files.find((entry) => entry.path === safePath) ??
     job.files.find((entry) => entry.path === `${safePath}.html`);
   if (!file) { res.status(404).send("File not found"); return; }
-  const response = await fetch(file.blobUrl);
-  if (!response.ok) { res.status(502).send("Stored preview file unavailable"); return; }
+
+  const asset = await axios.get(file.blobUrl, { responseType: "arraybuffer", timeout: 30000 });
   const contentType = file.mimeType || "application/octet-stream";
   res.setHeader("Content-Type", contentType);
   if (contentType.includes("text/html") || file.path.endsWith(".html")) {
-    const html = await response.text();
+    const html = Buffer.from(asset.data).toString("utf8");
     const previewBase = `/api/preview/${id}`;
     const shim = `<script>(function(){var base='${previewBase}';function rewrite(u){if(typeof u==='string'&&u.startsWith('/')&&!u.startsWith(base)&&!u.startsWith('//'))return base+u;return u;}var f=window.fetch;window.fetch=function(u,o){return f.call(this,rewrite(u),o);};var x=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){return x.apply(this,[m,rewrite(u)].concat(Array.prototype.slice.call(arguments,2)));};})();</script>`;
     res.send(html.includes("</head>") ? html.replace("</head>", shim + "</head>") : shim + html);
     return;
   }
-  res.send(Buffer.from(await response.arrayBuffer()));
+  res.send(Buffer.from(asset.data));
 });
 
-router.get("/preview/:id", async (req, res): Promise<void> => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.get("/preview/:id", async (req: any, res: any): Promise<void> => {
+  const id = String(req.params.id || "");
   res.redirect(`/api/preview/${id}/`);
 });
 

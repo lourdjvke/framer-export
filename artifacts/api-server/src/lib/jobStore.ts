@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { del } from "@vercel/blob";
+import axios from "axios";
 
 export type FileCategory = "html" | "css" | "js" | "image" | "video" | "font" | "json" | "other";
 export interface ConversionFile {
@@ -27,14 +28,21 @@ function dbUrl(path: string): string {
   return `${DB_URL}/framerjobs${suffix}.json${DB_TOKEN ? `?auth=${encodeURIComponent(DB_TOKEN)}` : ""}`;
 }
 async function dbRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
-  const response = await fetch(dbUrl(path), {
-    method, headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`Firebase RTDB ${method} failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
-  if (response.status === 204) return null as T;
-  return await response.json() as T;
+  try {
+    const response = await axios.request({
+      url: dbUrl(path),
+      method,
+      data: body,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      timeout: 15000,
+    });
+    return response.data as T;
+  } catch (error) {
+    const detail = axios.isAxiosError(error)
+      ? `${error.response?.status || error.code}: ${JSON.stringify(error.response?.data || error.message).slice(0, 300)}`
+      : String(error);
+    throw new Error(`Firebase RTDB ${method} failed: ${detail}`);
+  }
 }
 function fileKey(filePath: string): string {
   return Buffer.from(filePath, "utf8").toString("base64url");

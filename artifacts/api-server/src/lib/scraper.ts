@@ -1,4 +1,5 @@
 import axios from "axios";
+import { put } from "@vercel/blob";
 import * as cheerio from "cheerio";
 import * as fs from "fs";
 import * as path from "path";
@@ -482,14 +483,20 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
     const fullPath = path.join(jobDir, localPath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, data);
+    const blob = await put(`framerjobs/${jobId}/${localPath}`, data, {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: mimeType,
+    });
     const category =
       mimeToCategory(mimeType) === "other"
         ? extToCategory(path.extname(localPath))
         : mimeToCategory(mimeType);
-    addFile(jobId, { path: localPath, originalUrl, size: data.length, mimeType, category });
+    await addFile(jobId, { path: localPath, originalUrl, size: data.length, mimeType, category, blobUrl: blob.url });
   };
 
-  updateJob(jobId, { status: "crawling", progress: 5, message: "Fetching site…" });
+  await updateJob(jobId, { status: "crawling", progress: 5, message: "Fetching site…" });
 
   const urlQueue: string[] = [];
   const pagesVisited = new Set<string>();
@@ -531,7 +538,7 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
 
   await processPage(siteUrl);
 
-  updateJob(jobId, {
+  await updateJob(jobId, {
     status: "downloading",
     progress: 15,
     message: `Found ${urlQueue.length} assets, downloading…`,
@@ -619,7 +626,7 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
         90,
         15 + Math.floor((processed / Math.max(urlQueue.length, 1)) * 75),
       );
-      updateJob(jobId, {
+      await updateJob(jobId, {
         progress,
         message: `Downloading… (${processed}/${urlQueue.length})`,
       });
@@ -637,7 +644,7 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
     );
   }
 
-  updateJob(jobId, { status: "processing", progress: 92, message: "Finalising output…" });
+  await updateJob(jobId, { status: "processing", progress: 92, message: "Finalising output…" });
 
   // Write static-host routing configs so the downloaded ZIP works on Netlify/Vercel/etc.
   // These are not included in the preview file list (they're hosting metadata, not site files).
@@ -651,7 +658,7 @@ export async function startScrapeJob(jobId: string, siteUrl: string): Promise<vo
   );
   fs.writeFileSync(path.join(jobDir, "vercel.json"), vercelJson, "utf-8");
 
-  updateJob(jobId, {
+  await updateJob(jobId, {
     status: "done",
     progress: 100,
     message: "Conversion complete",

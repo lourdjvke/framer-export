@@ -1,241 +1,151 @@
 import { Router, type IRouter } from "express";
-import * as fs from "fs";
-import * as path from "path";
 import { ZipArchive } from "archiver";
-import { createJob, getJob, listJobs, updateJob } from "../../lib/jobStore.js";
-import { startScrapeJob, getJobDir } from "../../lib/scraper.js";
+import { waitUntil } from "@vercel/functions";
 import {
-  StartConversionBody,
-  GetConversionParams,
-  GetConversionStatsParams,
+  createJob, getJob, listJobs, updateJob, consumeDownloadRequest,
+} from "../../lib/jobStore.js";
+import { startScrapeJob } from "../../lib/scraper.js";
+import {
+  StartConversionBody, GetConversionParams, GetConversionStatsParams,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
-// List recent jobs
 router.get("/conversions", async (_req, res): Promise<void> => {
-  const jobs = listJobs();
-  res.json(jobs);
+  res.json(await listJobs());
 });
 
-// Start a new conversion
 router.post("/conversions", async (req, res): Promise<void> => {
   const parsed = StartConversionBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-
-  let { url } = parsed.data;
-
-  // Normalise URL
+  let url = parsed.data.url;
   try {
-    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-    url = u.href;
-  } catch {
-    res.status(400).json({ error: "Invalid URL" });
+    const parsedUrl = new URL(url.startsWith("http") ? url : `https://${url}`);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("Unsupported URL protocol");
+    if (["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname) || parsedUrl.hostname.endsWith(".local")) {
+      throw new Error("Local URLs cannot be imported");
+    }
+    url = parsedUrl.href;
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Invalid URL" });
     return;
   }
 
-  const job = createJob(url);
-
-  // Fire-and-forget scraping
-  startScrapeJob(job.id, url).catch((err) => {
-    req.log.error({ err, jobId: job.id }, "Scrape job failed");
-    updateJob(job.id, {
+  const job = await createJob(url);
+  const task = startScrapeJob(job.id, url).catch(async (error) => {
+    req.log.error({ err: error, jobId: job.id }, "Scrape job failed");
+    await updateJob(job.id, {
       status: "error",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: error instanceof Error ? error.message : String(error),
       completedAt: new Date().toISOString(),
+      message: "Conversion failed",
     });
   });
-
+  if (process.env.VERCEL) waitUntil(task);
+  else void task;
   res.status(201).json(job);
 });
 
-// Get job status
 router.get("/conversions/:id", async (req, res): Promise<void> => {
   const params = GetConversionParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
-
-  const job = getJob(params.data.id);
+  const job = await getJob(params.data.id);
   if (!job) {
-    res.status(404).json({ error: "Job not found" });
+    res.status(404).json({ error: "Job not found or expired" });
     return;
   }
-
   res.json(job);
 });
 
-// Get stats breakdown
 router.get("/conversions/:id/stats", async (req, res): Promise<void> => {
   const params = GetConversionStatsParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
-
-  const job = getJob(params.data.id);
+  const job = await getJob(params.data.id);
   if (!job) {
-    res.status(404).json({ error: "Job not found" });
+    res.status(404).json({ error: "Job not found or expired" });
     return;
   }
-
-  const catMap = new Map<string, { count: number; sizeBytes: number }>();
+  const categories = new Map<string, { count: number; sizeBytes: number }>();
   for (const file of job.files) {
-    const existing = catMap.get(file.category) ?? { count: 0, sizeBytes: 0 };
-    existing.count++;
-    existing.sizeBytes += file.size;
-    catMap.set(file.category, existing);
+    const stats = categories.get(file.category) ?? { count: 0, sizeBytes: 0 };
+    stats.count++;
+    stats.sizeBytes += file.size;
+    categories.set(file.category, stats);
   }
-
-  const byCategory = Array.from(catMap.entries()).map(([category, stats]) => ({
-    category,
-    count: stats.count,
-    sizeBytes: stats.sizeBytes,
-  }));
-
   res.json({
-    jobId: job.id,
-    totalFiles: job.totalFiles,
-    totalSizeBytes: job.totalSizeBytes,
-    byCategory,
+    jobId: job.id, totalFiles: job.totalFiles, totalSizeBytes: job.totalSizeBytes,
+    byCategory: Array.from(categories, ([category, stats]) => ({ category, ...stats })),
   });
 });
 
-// Search files within a job
 router.get("/conversions/:id/files/search", async (req, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const q = String(req.query.q ?? "").toLowerCase().trim();
-  const job = getJob(id);
-  if (!job) { res.status(404).json({ error: "Job not found" }); return; }
-  const results = q
-    ? job.files.filter((f) => f.path.toLowerCase().includes(q) || f.category.toLowerCase().includes(q))
-    : job.files;
-  res.json(results);
+  const job = await getJob(id);
+  if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
+  res.json(q ? job.files.filter((f) => f.path.toLowerCase().includes(q) || f.category.toLowerCase().includes(q)) : job.files);
 });
 
-// Download ZIP
 router.get("/conversions/:id/download", async (req, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const job = getJob(id);
-  if (!job) {
-    res.status(404).json({ error: "Job not found" });
-    return;
-  }
-  if (job.status !== "done") {
-    res.status(400).json({ error: "Conversion not complete yet" });
-    return;
-  }
-
-  const jobDir = getJobDir(id);
-  if (!fs.existsSync(jobDir)) {
-    res.status(404).json({ error: "Files not found" });
-    return;
-  }
+  const existing = await getJob(id);
+  if (!existing) { res.status(404).json({ error: "Job not found or expired" }); return; }
+  if (existing.status !== "done") { res.status(400).json({ error: "Conversion not complete yet" }); return; }
+  const job = await consumeDownloadRequest(id);
+  if (!job) { res.status(429).json({ error: "Download limit reached" }); return; }
 
   const safeName = new URL(job.url).hostname.replace(/[^a-z0-9.-]/gi, "_");
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
-
   const archive = new ZipArchive({ zlib: { level: 6 } });
-  archive.on("error", (err: Error) => {
-    req.log.error({ err }, "Archive error");
+  archive.on("error", (error: Error) => {
+    req.log.error({ err: error, jobId: id }, "Archive error");
     if (!res.headersSent) res.status(500).end();
   });
-
   archive.pipe(res);
-  archive.directory(jobDir, false);
+  for (const file of job.files) {
+    const asset = await fetch(file.blobUrl);
+    if (!asset.ok) throw new Error(`Stored asset unavailable: ${file.path}`);
+    archive.append(Buffer.from(await asset.arrayBuffer()), { name: file.path });
+  }
+  archive.append("# Netlify SPA routing\n/* /index.html 200\n", { name: "_redirects" });
+  archive.append(JSON.stringify({ rewrites: [{ source: "/((?!_next|assets).*)", destination: "/index.html" }] }, null, 2), { name: "vercel.json" });
   await archive.finalize();
 });
 
-// Serve preview files
 router.get("/preview/:id/{*splat}", async (req, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const splat = req.params.splat ?? "";
-  const filePath = Array.isArray(splat) ? splat.join("/") : splat;
-
-  const job = getJob(id);
-  if (!job) {
-    res.status(404).send("Job not found");
-    return;
-  }
-
-  const jobDir = getJobDir(id);
-  const requestedPath = filePath || "index.html";
-  let fullPath = path.join(jobDir, requestedPath);
-
-  // Prevent path traversal
-  if (!fullPath.startsWith(jobDir)) {
-    res.status(400).send("Bad path");
-    return;
-  }
-
-  // If directory, serve index.html
-  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-    fullPath = path.join(fullPath, "index.html");
-  }
-
-  if (!fs.existsSync(fullPath)) {
-    // Try fully-decoded variant (handles %20, double-encoding, etc.)
-    const tryDecode = (s: string): string => {
-      let prev = s;
-      for (let i = 0; i < 4; i++) {
-        try { const next = decodeURIComponent(prev); if (next === prev) break; prev = next; } catch { break; }
-      }
-      return prev;
-    };
-    const decodedRequested = tryDecode(requestedPath);
-    const decodedPath = path.join(jobDir, decodedRequested);
-    if (decodedPath.startsWith(jobDir) && fs.existsSync(decodedPath)) {
-      fullPath = decodedPath;
-    } else if (decodedPath.startsWith(jobDir) && fs.existsSync(decodedPath) && fs.statSync(decodedPath).isDirectory?.() && fs.existsSync(path.join(decodedPath, "index.html"))) {
-      fullPath = path.join(decodedPath, "index.html");
-    } else if (fs.existsSync(fullPath + ".html")) {
-      // Try appending .html for extensionless page routes
-      fullPath = fullPath + ".html";
-    } else if (fs.existsSync(decodedPath + ".html")) {
-      fullPath = decodedPath + ".html";
-    } else {
-      res.status(404).send("File not found: " + requestedPath);
-      return;
-    }
-  }
-
-  const ext = path.extname(fullPath).toLowerCase();
-  if (ext === ".html" || ext === "") {
-    // Inject path-rewrite shim so root-relative JS/fetch calls resolve under the preview base
-    const html = fs.readFileSync(fullPath, "utf-8");
+  const requestedPath = (Array.isArray(splat) ? splat.join("/") : splat) || "index.html";
+  const job = await getJob(id);
+  if (!job) { res.status(404).send("Job not found or expired"); return; }
+  const safePath = requestedPath.split("/").filter((part) => part && part !== "." && part !== "..").join("/");
+  const file = job.files.find((entry) => entry.path === safePath) ??
+    job.files.find((entry) => entry.path === `${safePath}.html`);
+  if (!file) { res.status(404).send("File not found"); return; }
+  const response = await fetch(file.blobUrl);
+  if (!response.ok) { res.status(502).send("Stored preview file unavailable"); return; }
+  const contentType = file.mimeType || "application/octet-stream";
+  res.setHeader("Content-Type", contentType);
+  if (contentType.includes("text/html") || file.path.endsWith(".html")) {
+    const html = await response.text();
     const previewBase = `/api/preview/${id}`;
-    const shim = `<script>
-(function(){
-  var base = '${previewBase}';
-  function rewrite(u){
-    if(typeof u==='string' && u.startsWith('/') && !u.startsWith(base) && !u.startsWith('//')){
-      return base + u;
-    }
-    return u;
-  }
-  var _fetch = window.fetch;
-  window.fetch = function(u, opts){ return _fetch.call(this, rewrite(u), opts); };
-  var _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(m, u){ return _open.apply(this, [m, rewrite(u)].concat(Array.prototype.slice.call(arguments,2))); };
-  var _pushState = history.pushState;
-  var _replaceState = history.replaceState;
-})();
-</script>`;
-    const patched = html.replace("</head>", shim + "\n</head>");
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(patched);
+    const shim = `<script>(function(){var base='${previewBase}';function rewrite(u){if(typeof u==='string'&&u.startsWith('/')&&!u.startsWith(base)&&!u.startsWith('//'))return base+u;return u;}var f=window.fetch;window.fetch=function(u,o){return f.call(this,rewrite(u),o);};var x=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){return x.apply(this,[m,rewrite(u)].concat(Array.prototype.slice.call(arguments,2)));};})();</script>`;
+    res.send(html.includes("</head>") ? html.replace("</head>", shim + "</head>") : shim + html);
     return;
   }
-
-  res.sendFile(fullPath);
+  res.send(Buffer.from(await response.arrayBuffer()));
 });
 
-// Handle root preview redirect
 router.get("/preview/:id", async (req, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   res.redirect(`/api/preview/${id}/`);

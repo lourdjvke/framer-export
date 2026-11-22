@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router } from "express";
 import { ZipArchive } from "archiver";
 import { waitUntil } from "@vercel/functions";
 import {
@@ -9,7 +9,7 @@ import {
   StartConversionBody, GetConversionParams, GetConversionStatsParams,
 } from "@workspace/api-zod";
 
-const router: IRouter = Router();
+const router = Router();
 
 router.get("/conversions", async (_req, res): Promise<void> => {
   res.json(await listJobs());

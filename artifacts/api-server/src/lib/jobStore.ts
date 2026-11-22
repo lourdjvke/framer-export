@@ -23,7 +23,8 @@ const DB_TOKEN = process.env.FIREBASE_DATABASE_SECRET || process.env.FIREBASE_DA
 const TTL_MS = 10 * 60 * 1000;
 
 function dbUrl(path: string): string {
-  return `${DB_URL}/framerjobs/${path}.json${DB_TOKEN ? `?auth=${encodeURIComponent(DB_TOKEN)}` : ""}`;
+  const suffix = path ? `/${path}` : "";
+  return `${DB_URL}/framerjobs${suffix}.json${DB_TOKEN ? `?auth=${encodeURIComponent(DB_TOKEN)}` : ""}`;
 }
 async function dbRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
   const response = await fetch(dbUrl(path), {
@@ -47,6 +48,7 @@ function hydrate(raw: StoredJob): ConversionJob {
   };
 }
 export async function createJob(url: string): Promise<ConversionJob> {
+  await listJobs(); // opportunistically remove expired records and their Blob assets
   const now = Date.now();
   const id = randomUUID();
   const job: ConversionJob = {

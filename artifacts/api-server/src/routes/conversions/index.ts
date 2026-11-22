@@ -36,7 +36,7 @@ router.post("/conversions", async (req, res): Promise<void> => {
 
   const job = await createJob(url);
   const task = startScrapeJob(job.id, url).catch(async (error) => {
-    req.log.error({ err: error, jobId: job.id }, "Scrape job failed");
+    console.error("Scrape job failed", { error, jobId: job.id });
     await updateJob(job.id, {
       status: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
@@ -108,7 +108,7 @@ router.get("/conversions/:id/download", async (req, res): Promise<void> => {
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
   const archive = new ZipArchive({ zlib: { level: 6 } });
   archive.on("error", (error: Error) => {
-    req.log.error({ err: error, jobId: id }, "Archive error");
+    console.error("Archive error", { error, jobId: id });
     if (!res.headersSent) res.status(500).end();
   });
   archive.pipe(res);

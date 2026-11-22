@@ -1,92 +1,102 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
+import { del } from "@vercel/blob";
 
 export type FileCategory = "html" | "css" | "js" | "image" | "video" | "font" | "json" | "other";
-
 export interface ConversionFile {
-  path: string;
-  originalUrl: string;
-  size: number;
-  mimeType: string;
-  category: FileCategory;
+  path: string; originalUrl: string; size: number; mimeType: string;
+  category: FileCategory; blobUrl: string;
 }
-
 export type JobStatus = "pending" | "crawling" | "downloading" | "processing" | "done" | "error";
-
 export interface ConversionJob {
-  id: string;
-  url: string;
-  status: JobStatus;
-  progress: number;
-  message: string;
-  totalFiles: number;
-  totalSizeBytes: number;
-  files: ConversionFile[];
-  previewPath: string | null;
-  downloadPath: string | null;
-  createdAt: string;
-  completedAt: string | null;
-  errorMessage: string | null;
+  id: string; url: string; status: JobStatus; progress: number; message: string;
+  totalFiles: number; totalSizeBytes: number; files: ConversionFile[];
+  previewPath: string | null; downloadPath: string | null;
+  createdAt: string; completedAt: string | null; errorMessage: string | null;
+  expiresAt: number; requestsUsed: number; maxRequests: number;
 }
+type StoredJob = Omit<ConversionJob, "files" | "totalFiles" | "totalSizeBytes"> & {
+  files?: Record<string, ConversionFile>;
+  totalFiles?: number; totalSizeBytes?: number;
+};
+const DB_URL = (process.env.FIREBASE_DATABASE_URL || "https://breachr-f1e71-default-rtdb.firebaseio.com").replace(/\/$/, "");
+const DB_TOKEN = process.env.FIREBASE_DATABASE_SECRET || process.env.FIREBASE_DATABASE_AUTH_TOKEN;
+const TTL_MS = 10 * 60 * 1000;
 
-const jobs = new Map<string, ConversionJob>();
-
-export function createJob(url: string): ConversionJob {
+function dbUrl(path: string): string {
+  return `${DB_URL}/framerjobs/${path}.json${DB_TOKEN ? `?auth=${encodeURIComponent(DB_TOKEN)}` : ""}`;
+}
+async function dbRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const response = await fetch(dbUrl(path), {
+    method, headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Firebase RTDB ${method} failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+  if (response.status === 204) return null as T;
+  return await response.json() as T;
+}
+function fileKey(filePath: string): string {
+  return Buffer.from(filePath, "utf8").toString("base64url");
+}
+function hydrate(raw: StoredJob): ConversionJob {
+  const files = Object.values(raw.files || {});
+  return {
+    ...raw, files,
+    totalFiles: files.length,
+    totalSizeBytes: files.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
+  };
+}
+export async function createJob(url: string): Promise<ConversionJob> {
+  const now = Date.now();
   const id = randomUUID();
   const job: ConversionJob = {
-    id,
-    url,
-    status: "pending",
-    progress: 0,
-    message: "Starting conversion…",
-    totalFiles: 0,
-    totalSizeBytes: 0,
-    files: [],
-    previewPath: null,
-    downloadPath: null,
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-    errorMessage: null,
+    id, url, status: "pending", progress: 0, message: "Starting conversion…",
+    totalFiles: 0, totalSizeBytes: 0, files: [], previewPath: null, downloadPath: null,
+    createdAt: new Date(now).toISOString(), completedAt: null, errorMessage: null,
+    expiresAt: now + TTL_MS, requestsUsed: 0, maxRequests: 5,
   };
-  jobs.set(id, job);
-
-  // Expire jobs after 2 hours
-  setTimeout(() => jobs.delete(id), 2 * 60 * 60 * 1000);
-
+  const { files: _files, ...record } = job;
+  await dbRequest(id, "PUT", record);
   return job;
 }
-
-export function getJob(id: string): ConversionJob | undefined {
-  return jobs.get(id);
+async function removeExpired(id: string, raw: StoredJob): Promise<void> {
+  const files = Object.values(raw.files || {});
+  await Promise.allSettled(files.map((file) => file.blobUrl ? del(file.blobUrl) : Promise.resolve()));
+  await dbRequest(id, "DELETE");
 }
-
-export function listJobs(): ConversionJob[] {
-  return Array.from(jobs.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-}
-
-export function updateJob(id: string, updates: Partial<ConversionJob>): void {
-  const job = jobs.get(id);
-  if (job) {
-    Object.assign(job, updates);
-    jobs.set(id, job);
+export async function getJob(id: string): Promise<ConversionJob | undefined> {
+  const raw = await dbRequest<StoredJob | null>(id, "GET");
+  if (!raw) return undefined;
+  if (Number(raw.expiresAt) <= Date.now()) {
+    await removeExpired(id, raw);
+    return undefined;
   }
+  return hydrate(raw);
 }
-
-export function addFile(id: string, file: ConversionFile): void {
-  const job = jobs.get(id);
-  if (job) {
-    // Deduplicate: if we already recorded this path, just update size if changed
-    const existing = job.files.find((f) => f.path === file.path);
-    if (existing) {
-      const sizeDiff = file.size - existing.size;
-      Object.assign(existing, file);
-      job.totalSizeBytes += sizeDiff;
-    } else {
-      job.files.push(file);
-      job.totalFiles = job.files.length;
-      job.totalSizeBytes += file.size;
+export async function listJobs(): Promise<ConversionJob[]> {
+  const raw = await dbRequest<Record<string, StoredJob> | null>("", "GET");
+  if (!raw) return [];
+  const entries = await Promise.all(Object.entries(raw).map(async ([id, record]) => {
+    if (Number(record.expiresAt) <= Date.now()) {
+      await removeExpired(id, record);
+      return null;
     }
-    jobs.set(id, job);
-  }
+    return hydrate(record);
+  }));
+  return entries.filter((job): job is ConversionJob => job !== null)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+export async function updateJob(id: string, updates: Partial<ConversionJob>): Promise<void> {
+  const { files: _files, totalFiles: _totalFiles, totalSizeBytes: _totalSize, ...fields } = updates;
+  await dbRequest(id, "PATCH", fields);
+}
+export async function addFile(id: string, file: ConversionFile): Promise<void> {
+  await dbRequest(`${id}/files/${fileKey(file.path)}`, "PUT", file);
+}
+export async function consumeDownloadRequest(id: string): Promise<ConversionJob | undefined> {
+  const job = await getJob(id);
+  if (!job) return undefined;
+  if (job.requestsUsed >= job.maxRequests) return undefined;
+  await updateJob(id, { requestsUsed: job.requestsUsed + 1 });
+  return { ...job, requestsUsed: job.requestsUsed + 1 };
 }

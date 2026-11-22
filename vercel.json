@@ -1,0 +1,16 @@
+{
+  "framework": "vite",
+  "buildCommand": "pnpm --filter @workspace/framer-export build",
+  "outputDirectory": "artifacts/framer-export/dist/public",
+  "functions": {
+    "api/[...path].ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

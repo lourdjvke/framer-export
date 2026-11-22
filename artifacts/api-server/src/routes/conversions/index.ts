@@ -1,6 +1,6 @@
 import { Router } from "express";
 import axios from "axios";
-import { ZipArchive } from "archiver";
+import archiver from "archiver";
 import { waitUntil } from "@vercel/functions";
 import {
   createJob, getJob, listJobs, updateJob, consumeDownloadRequest,
@@ -88,7 +88,7 @@ router.get("/conversions/:id/download", async (req: any, res: any): Promise<void
   const safeName = new URL(job.url).hostname.replace(/[^a-z0-9.-]/gi, "_");
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
-  const archive = new ZipArchive({ zlib: { level: 6 } });
+  const archive = archiver("zip", { zlib: { level: 6 } });
   archive.on("error", (error: Error) => {
     console.error("Archive error", { error, jobId: id });
     if (!res.headersSent) res.status(500).end();

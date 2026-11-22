@@ -8,7 +8,7 @@ import {
 import { startScrapeJob } from "../../lib/scraper.js";
 
 const require = createRequire(import.meta.url);
-const archiver = require("archiver") as typeof import("archiver");
+const archiver: any = require("archiver");
 
 const router = Router();
 

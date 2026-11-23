@@ -1,14 +1,11 @@
 import { Router } from "express";
 import axios from "axios";
-import { createRequire } from "node:module";
 import { waitUntil } from "@vercel/functions";
 import {
   createJob, getJob, listJobs, updateJob, consumeDownloadRequest,
 } from "../../lib/jobStore.js";
 import { startScrapeJob } from "../../lib/scraper.js";
 
-const require = createRequire(import.meta.url);
-const archiver: any = require("archiver");
 
 const router = Router();
 
@@ -91,6 +88,7 @@ router.get("/conversions/:id/download", async (req: any, res: any): Promise<void
   const safeName = new URL(job.url).hostname.replace(/[^a-z0-9.-]/gi, "_");
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
+  const { default: archiver } = await import("archiver");
   const archive = archiver("zip", { zlib: { level: 6 } });
   archive.on("error", (error: Error) => {
     console.error("Archive error", { error, jobId: id });
